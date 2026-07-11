@@ -7,7 +7,9 @@ and their app verifies keys fully offline. There is **no server component and
 no network call anywhere** — never add one.
 
 `SPEC.md` is the normative wire-format spec. `README.md` is the human guide.
-This file tells you, the agent, how to operate safely and get tasks done.
+`AI_INTEGRATION.md` is the canonical cross-agent playbook for integrating this
+project into another app. This file tells you, the agent, how to operate safely
+and get tasks done.
 
 ## Safety rules — hard constraints, no exceptions
 

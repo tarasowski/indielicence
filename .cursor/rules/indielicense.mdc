@@ -1,0 +1,9 @@
+---
+description: IndieLicense safety and integration instructions
+alwaysApply: true
+---
+
+Read and follow `AGENTS.md` for all work in this repository. When integrating
+IndieLicense into another application, follow `AI_INTEGRATION.md` as the
+canonical procedure. Its private-key, state-file, revocation, offline-only,
+cryptography, validation-order, and testing rules are mandatory.
