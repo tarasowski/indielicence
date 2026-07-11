@@ -54,6 +54,11 @@ function mint(fields) {
     grouped(crockfordEncode(Buffer.concat([payload, signature])));
 }
 
+function signedPayload(payload, prefix = "PIXELPRO") {
+  const signature = crypto.sign(null, payload, privateKey);
+  return prefix + "-" + grouped(crockfordEncode(Buffer.concat([payload, signature])));
+}
+
 // A valid key whose payload we then corrupt: flip one bit inside the signed
 // region (the key id) and re-encode, keeping the original signature.
 function tamper(fields) {
@@ -95,6 +100,18 @@ const vectors = {
       key: mint({ ...base, keyID: 6 }) },
     { name: "garbage", expect: "malformed",
       key: "PIXELPRO-THIS0-IS0N0-TAKEY" },
+    { name: "oversized_product_signed", expect: "malformed",
+      key: mint({ product: "a".repeat(65), issuedDay: ISSUED_DAY, keyID: 8 }) },
+    { name: "unknown_flags_signed", expect: "malformed",
+      key: (() => {
+        const payload = encodePayload({ ...base, keyID: 9 });
+        payload[payload.length - 1] = 4;
+        return signedPayload(payload);
+      })() },
+    { name: "trailing_payload_byte_signed", expect: "malformed",
+      key: signedPayload(Buffer.concat([
+        encodePayload({ ...base, keyID: 10 }), Buffer.from([0]),
+      ])) },
     { name: "unsupported_version", expect: "unsupported_version",
       // version byte forced to 9, signed with the real key (decode must
       // reject BEFORE signature verification per SPEC validation order)
@@ -107,12 +124,18 @@ const vectors = {
   ],
 };
 
-// Signed denylist revoking key id 6 (message: SPEC.md §Denylist).
-const denylistMessage = ["indielicense-denylist-v1", "pixelpro", "6"].join("\n");
+// Signed denylist v1 revoking key id 6. Notes and the monotonic sequence are
+// authenticated; note text is UTF-8 base64 in the canonical message.
+const denylistNote = "test vector: refunded";
+const denylistMessage = [
+  "indielicense-denylist-v1", "pixelpro", "1",
+  `6\t+${Buffer.from(denylistNote, "utf8").toString("base64")}`,
+].join("\n");
 vectors.denylist = {
   format: "indielicense-denylist-v1",
   product: "pixelpro",
-  revoked: [{ key_id: 6, note: "test vector: refunded" }],
+  sequence: 1,
+  revoked: [{ key_id: 6, note: denylistNote }],
   signature: crypto.sign(null, Buffer.from(denylistMessage, "utf8"), privateKey)
     .toString("base64"),
 };

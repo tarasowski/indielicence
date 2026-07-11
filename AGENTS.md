@@ -42,8 +42,8 @@ never in the repo working tree.
 ```sh
 swift build                        # debug build
 swift build -c release --product indielicense   # CLI at .build/release/indielicense
-swift test                         # 15 tests: library, CLI, shared vectors, file-sync check
-node --test Tests/verify.test.mjs  # 12 tests: JS verifier against the same vectors
+swift test                         # library, CLI, adversarial, concurrency, vectors, file-sync
+node --test Tests/verify.test.mjs  # JS verifier plus adversarial regression tests
 Examples/demo.sh                   # end-to-end: init → mint → verify → tamper → revoke (in a temp dir)
 node Tools/make-vectors.mjs > Tests/vectors.json   # regenerate vectors (deterministic; commit the diff only if the spec changed)
 ```
@@ -99,12 +99,12 @@ cp Verifier/LicenseVerifier.swift Sources/IndieLicense/LicenseVerifier.swift
 let validator = LicenseValidator(
     publicKey: "BASE64_PUBLIC_KEY_FROM_INIT",
     product: "theirproductid",
-    buildDate: LicenseValidator.compiledDate,  // or hardcode the release date
+    buildDate: Date(timeIntervalSince1970: RELEASE_UNIX_DAY * 86_400),
     denylist: Bundle.main.url(forResource: "theirproductid.denylist", withExtension: "json"))
 
 switch validator.validate(pastedKey) {
 case .valid(let info):
-    LicenseStore.shared.save(key: pastedKey)   // Keychain, survives reinstalls
+    try LicenseStore.shared.save(key: pastedKey) // Keychain, survives reinstalls
     // info.isLifetime, info.effectiveUpdatesUntil, info.effectiveExpiresAt
 case .invalid(.updatesExpired(let on)):
     // still licensed for THIS build — show "renew for updates until \(on)", not an error
@@ -113,7 +113,7 @@ case .invalid(let reason):
 }
 ```
 
-3. On every launch, re-validate: `validator.validate(LicenseStore.shared.load() ?? "")`.
+3. On every launch, re-validate: `validator.validate((try LicenseStore.shared.load()) ?? "")`.
    The first successful validation stamps the customer's activation date —
    that's what starts trial/update windows.
 4. If the user has a denylist, bundle `<product>.denylist.json` as an app
@@ -121,7 +121,10 @@ case .invalid(let reason):
 
 For Electron/Tauri apps use `Verifier/verify.mjs` — it's pure (no storage):
 persist `activatedAt` yourself on first valid check and pass the same date on
-every later call, along with the parsed denylist JSON if bundled.
+every later call, along with the parsed denylist JSON if bundled. Also persist
+the greatest returned `denylistSequence` and pass it back as
+`minimumDenylistSequence`. Embed an immutable release `buildDate`; never use
+wall clock or executable modification time.
 
 ## Task: handle a refund
 
@@ -129,8 +132,7 @@ Only on explicit user request (rule 6): find the key id (in their sales CSV,
 or `indielicense inspect <key>`), then
 `indielicense revoke <key_id> --note "refunded" --key-dir <dir>`, and remind
 the user to bundle the updated `<product>.denylist.json` into their next
-release. `indielicense revoke --list` shows current entries.
-
+release. `indielicense revoke --list --key-dir <dir>` shows current entries.
 ## Debugging keys
 
 - `indielicense inspect <key>` — decode a key with no key material (signature NOT checked).

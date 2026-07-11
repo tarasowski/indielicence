@@ -1,0 +1,10 @@
+# Security-sensitive trust boundary: require owner review through branch rules.
+/SPEC.md @tarasowski
+/Verifier/ @tarasowski
+/Sources/IndieLicense/ @tarasowski
+/Sources/CLI/ @tarasowski
+/Tools/make-vectors.mjs @tarasowski
+/Tests/vectors.json @tarasowski
+/.github/workflows/ @tarasowski
+/Package.swift @tarasowski
+/Package.resolved @tarasowski

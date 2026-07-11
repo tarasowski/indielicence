@@ -118,7 +118,7 @@ Aim for this integration experience:
 let validator = LicenseValidator(
     publicKey: "BASE64_PUBLIC_KEY",
     product: "pixelpro",
-    buildDate: LicenseValidator.compiledDate,   // helper; document how it's derived
+    buildDate: embeddedReleaseDate,              // immutable constant in the signed build
     denylist: Bundle.main.url(forResource: "denylist", withExtension: "json") // optional
 )
 switch validator.validate(userPastedKey) {

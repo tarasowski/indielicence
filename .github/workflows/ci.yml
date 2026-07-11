@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -10,13 +13,15 @@ jobs:
     name: Build & test (macOS)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Swift version
         run: swift --version
 
       - name: Build
-        run: swift build
+        run: swift build -Xswiftc -warnings-as-errors
 
       - name: Swift tests (library, CLI, shared vectors)
         run: swift test
@@ -34,5 +39,6 @@ jobs:
 
       - name: No network calls anywhere in the codebase
         run: |
-          ! grep -rnE 'URLSession|NWConnection|CFNetwork|node:https?"| fetch\(' \
-              Sources Verifier --include='*.swift' --include='*.mjs'
+          ! rg -n -g '*.swift' -g '*.mjs' \
+            'URLSession|NSURLConnection|CFNetwork|import Network|NW(Connection|Listener|Path)|node:(http|https|net|tls|dgram|dns)|\b(fetch|WebSocket|socket|connect|getaddrinfo)\s*\(|\b(curl|wget)\b' \
+            Sources Verifier

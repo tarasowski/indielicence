@@ -1,17 +1,8 @@
 //
 //  LicenseVerifier.swift — IndieLicense single-file verifier
 //
-//  Drop this one file into your app to validate IndieLicense keys fully
-//  offline. It contains no secrets: only your Ed25519 PUBLIC key is embedded,
-//  which can verify keys but never create them.
-//
-//  This file is intentionally readable top-to-bottom — it is a trust
-//  artifact. It imports only Apple system frameworks: CryptoKit (Ed25519),
-//  Foundation, and Security (Keychain persistence). It makes no network
-//  calls and collects no data.
-//
-//  Format: see SPEC.md in https://github.com/… (the spec is normative).
-//  License: MIT.
+//  Drop this file into an app to validate IndieLicense keys fully offline.
+//  It contains no secrets and makes no network calls.
 //
 
 import CryptoKit
@@ -20,34 +11,30 @@ import Security
 
 // MARK: - Public API
 
-/// Everything an app wants to show about a valid license.
 public struct LicenseInfo: Equatable {
     public let product: String
     public let keyID: UInt32
-    /// When the key was minted. Informational only — never used in validation math.
     public let issuedAt: Date
-    /// Days from activation until the app stops working (trial keys). nil = no hard expiry.
     public let expiresDurationDays: UInt16?
-    /// Days from activation during which released app versions are covered. nil = all versions, forever.
     public let updatesDurationDays: UInt16?
-    /// True when neither duration is set: the key unlocks every version, forever.
     public let isLifetime: Bool
-    /// activatedAt + expiresDurationDays. nil unless this is a trial key.
     public let effectiveExpiresAt: Date?
-    /// activatedAt + updatesDurationDays. nil when the key has no update cutoff.
     public let effectiveUpdatesUntil: Date?
+    /// The authenticated denylist sequence accepted during validation, if any.
+    public let denylistSequence: UInt32?
 }
 
 public enum LicenseInvalidReason: Equatable {
-    case malformed(String)         // not decodable as a license key
-    case unsupportedVersion(UInt8) // format version this verifier doesn't know
-    case badSignature              // payload does not verify against the public key
+    case malformed(String)
+    case unsupportedVersion(UInt8)
+    case badSignature
     case wrongProduct(found: String)
-    case expired(on: Date)         // trial window has passed — the app should lock
-    case updatesExpired(on: Date)  // this BUILD is newer than the update window —
-                                   // show "renew for updates", not "invalid key"
+    case expired(on: Date)
+    case updatesExpired(on: Date)
     case revoked(note: String?)
-    case badDenylist(String)       // bundled denylist is unreadable or badly signed
+    case badDenylist(String)
+    case invalidConfiguration(String)
+    case storageFailure(String)
 }
 
 public enum LicenseValidationResult: Equatable {
@@ -55,12 +42,13 @@ public enum LicenseValidationResult: Equatable {
     case invalid(LicenseInvalidReason)
 }
 
-/// Stores the first-activation date per key. `LicenseStore` (Keychain) is the
-/// default; tests or unusual setups can substitute their own.
-public protocol LicenseActivationDateStore {
-    /// Returns the stored first-activation date for a key, stamping it with
-    /// the current date on first call. Must return the same date afterwards.
-    func activatedAt(for keyID: UInt32) -> Date
+/// Persistent security state used for activation anchoring and denylist
+/// rollback detection. Implementations must be atomic and must never silently
+/// replace corrupt or unreadable state.
+public protocol LicenseStateStore {
+    func activatedAt(for licenseIdentifier: String) throws -> Date
+    func highestDenylistSequence(for productIdentifier: String) throws -> UInt32?
+    func recordDenylistSequence(_ sequence: UInt32, for productIdentifier: String) throws
 }
 
 public struct LicenseValidator {
@@ -68,68 +56,60 @@ public struct LicenseValidator {
     public let product: String
     public let buildDate: Date
     private let denylist: Result<Denylist, LicenseInvalidReason>?
-    private let activationDates: LicenseActivationDateStore
+    private let stateStore: LicenseStateStore
 
-    /// - Parameters:
-    ///   - publicKey: base64 of the raw 32-byte Ed25519 public key (printed by `indielicense init`).
-    ///   - product: your product id — keys minted for anything else are rejected.
-    ///   - buildDate: when THIS build was released; compared against the update
-    ///     window. Use `LicenseValidator.compiledDate` or hardcode a date per release.
-    ///   - denylist: optional URL of a bundled, signed `<product>.denylist.json`.
-    ///   - activationDates: where first-activation dates live. Default: Keychain.
+    /// `buildDate` must be a constant embedded in the signed app binary. Never
+    /// derive it from file modification metadata or the current wall clock.
     public init(
         publicKey: String,
         product: String,
-        buildDate: Date = LicenseValidator.compiledDate,
+        buildDate: Date,
         denylist: URL? = nil,
-        activationDates: LicenseActivationDateStore = LicenseStore.shared
+        stateStore: LicenseStateStore = LicenseStore.shared
     ) {
         self.publicKey = publicKey
         self.product = product
         self.buildDate = buildDate
-        self.activationDates = activationDates
-        self.denylist = denylist.map { Denylist.load(from: $0, product: product, publicKeyBase64: publicKey) }
-    }
-
-    /// The modification date of the running executable — stamped when the app
-    /// was built/signed, so it tracks the release date with zero setup. If it
-    /// can't be read, falls back to the distant past, which always PASSES the
-    /// update-window check (fail open, never lock out a paying user).
-    public static var compiledDate: Date {
-        if let path = Bundle.main.executablePath,
-           let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-           let date = attributes[.modificationDate] as? Date {
-            return date
+        self.stateStore = stateStore
+        self.denylist = denylist.map {
+            Denylist.load(from: $0, product: product, publicKeyBase64: publicKey)
         }
-        return .distantPast
     }
 
-    /// Validate a pasted key. Call this on every launch with the stored key.
-    /// `now` exists for tests; leave it defaulted in real apps.
     public func validate(_ key: String, now: Date = Date()) -> LicenseValidationResult {
-        // 1. Decode + 2. check format version.
         let payload: LicensePayload
-        do { payload = try LicensePayload.decode(key) } catch let reason as LicenseInvalidReason {
-            return .invalid(reason)
-        } catch { return .invalid(.malformed("undecodable")) }
+        do { payload = try LicensePayload.decode(key) }
+        catch let reason as LicenseInvalidReason { return .invalid(reason) }
+        catch { return .invalid(.malformed("undecodable")) }
 
-        // 3. Verify the Ed25519 signature over the exact payload bytes.
-        guard let keyData = Data(base64Encoded: publicKey),
+        guard isFiniteDate(now), isFiniteDate(buildDate) else {
+            return .invalid(.invalidConfiguration("now and buildDate must be finite dates"))
+        }
+        guard isValidProductID(product) else {
+            return .invalid(.invalidConfiguration("configured product must be 1-64 lowercase a-z0-9 characters"))
+        }
+        guard let keyData = strictBase64(publicKey, expectedBytes: 32),
               let verifier = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData)
-        else { return .invalid(.malformed("public key is not valid base64/Ed25519")) }
+        else { return .invalid(.invalidConfiguration("public key is not canonical base64 Ed25519 material")) }
+
         guard verifier.isValidSignature(payload.signature, for: payload.signedBytes)
         else { return .invalid(.badSignature) }
+        guard payload.product == product else {
+            return .invalid(.wrongProduct(found: payload.product))
+        }
 
-        // 4. The key must be for THIS product.
-        guard payload.product == product else { return .invalid(.wrongProduct(found: payload.product)) }
-
-        // First successful validation of a duration-based key stamps the
-        // activation date (plain wall clock, once — see SPEC.md). All
-        // effective dates derive from it.
+        let licenseIdentifier = stableIdentifier(
+            fields: [Data(product.utf8), keyData, payload.signedBytes])
         var effectiveExpiresAt: Date?
         var effectiveUpdatesUntil: Date?
         if payload.expiresDurationDays != nil || payload.updatesDurationDays != nil {
-            let activatedDay = unixDay(of: activationDates.activatedAt(for: payload.keyID))
+            let activatedAt: Date
+            do { activatedAt = try stateStore.activatedAt(for: licenseIdentifier) }
+            catch { return .invalid(.storageFailure("activation date: \(error)")) }
+            guard isFiniteDate(activatedAt) else {
+                return .invalid(.storageFailure("stored activation date is invalid"))
+            }
+            let activatedDay = unixDay(of: activatedAt)
             if let days = payload.expiresDurationDays {
                 effectiveExpiresAt = date(ofUnixDay: activatedDay + Int(days))
             }
@@ -138,22 +118,33 @@ public struct LicenseValidator {
             }
         }
 
-        // 5. Trial keys: hard-expire when the wall clock passes the window.
         if let expiresAt = effectiveExpiresAt, unixDay(of: now) > unixDay(of: expiresAt) {
             return .invalid(.expired(on: expiresAt))
         }
-
-        // 6. Update window: compared against the BUILD date, not the clock —
-        //    an outdated build keeps working forever; only newer builds ask to renew.
-        if let updatesUntil = effectiveUpdatesUntil, unixDay(of: buildDate) > unixDay(of: updatesUntil) {
+        if let updatesUntil = effectiveUpdatesUntil,
+           unixDay(of: buildDate) > unixDay(of: updatesUntil) {
             return .invalid(.updatesExpired(on: updatesUntil))
         }
 
-        // 7. The signed denylist, if one is bundled.
+        var acceptedDenylistSequence: UInt32?
         if let denylist {
             switch denylist {
             case .failure(let reason): return .invalid(reason)
             case .success(let list):
+                let productIdentifier = stableIdentifier(fields: [Data(product.utf8), keyData])
+                do {
+                    let highest = try stateStore.highestDenylistSequence(for: productIdentifier)
+                    if let highest, list.sequence < highest {
+                        return .invalid(.badDenylist(
+                            "rollback detected: sequence \(list.sequence) is older than \(highest)"))
+                    }
+                    if highest == nil || list.sequence > highest! {
+                        try stateStore.recordDenylistSequence(list.sequence, for: productIdentifier)
+                    }
+                } catch {
+                    return .invalid(.storageFailure("denylist sequence: \(error)"))
+                }
+                acceptedDenylistSequence = list.sequence
                 if let entry = list.revoked.first(where: { $0.keyID == payload.keyID }) {
                     return .invalid(.revoked(note: entry.note))
                 }
@@ -168,133 +159,212 @@ public struct LicenseValidator {
             updatesDurationDays: payload.updatesDurationDays,
             isLifetime: payload.expiresDurationDays == nil && payload.updatesDurationDays == nil,
             effectiveExpiresAt: effectiveExpiresAt,
-            effectiveUpdatesUntil: effectiveUpdatesUntil
+            effectiveUpdatesUntil: effectiveUpdatesUntil,
+            denylistSequence: acceptedDenylistSequence
         ))
     }
 }
 
-// MARK: - Wire format (SPEC.md §Payload is normative)
+// MARK: - Wire format
 
-/// The decoded binary payload of a license key.
 public struct LicensePayload {
     public let version: UInt8
     public let product: String
     public let keyID: UInt32
-    public let issuedDay: UInt16       // unix days since 1970-01-01 UTC
+    public let issuedDay: UInt16
     public let expiresDurationDays: UInt16?
     public let updatesDurationDays: UInt16?
-    public let signedBytes: Data       // the exact bytes the signature covers
-    public let signature: Data         // 64-byte Ed25519 signature
+    public let signedBytes: Data
+    public let signature: Data
 
-    /// Decodes a human-format key. Performs NO signature check — pair with
-    /// `LicenseValidator` for that. Throws `LicenseInvalidReason`.
     public static func decode(_ key: String) throws -> LicensePayload {
-        // Everything before the first "-" is the display prefix; the product
-        // id that counts is the one inside the signed payload.
-        let groups = key.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "-")
-        guard groups.count >= 2 else { throw LicenseInvalidReason.malformed("expected PREFIX-XXXXX-…") }
+        guard key.utf8.count <= 512 else {
+            throw LicenseInvalidReason.malformed("key is too long")
+        }
+        let groups = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "-", omittingEmptySubsequences: false)
+        guard groups.count >= 2, !groups[0].isEmpty else {
+            throw LicenseInvalidReason.malformed("expected PREFIX-XXXXX-...")
+        }
         let raw = try crockfordDecode(groups.dropFirst().joined())
-
         guard raw.count > 64 else { throw LicenseInvalidReason.malformed("too short") }
         let signature = raw.suffix(64)
         let body = raw.prefix(raw.count - 64)
 
         var cursor = body.startIndex
         func take(_ n: Int) throws -> Data {
-            guard body.distance(from: cursor, to: body.endIndex) >= n
-            else { throw LicenseInvalidReason.malformed("truncated payload") }
-            defer { cursor = body.index(cursor, offsetBy: n) }
-            return Data(body[cursor..<body.index(cursor, offsetBy: n)])  // rebased copy — slices keep parent indices
+            guard n >= 0, body.distance(from: cursor, to: body.endIndex) >= n else {
+                throw LicenseInvalidReason.malformed("truncated payload")
+            }
+            let end = body.index(cursor, offsetBy: n)
+            defer { cursor = end }
+            return Data(body[cursor..<end])
         }
 
         let version = try take(1)[0]
         guard version == 1 else { throw LicenseInvalidReason.unsupportedVersion(version) }
         let productLength = Int(try take(1)[0])
-        guard (1...64).contains(productLength) else { throw LicenseInvalidReason.malformed("bad product length") }
-        guard let product = String(data: try take(productLength), encoding: .utf8),
-              product.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) })
-        else { throw LicenseInvalidReason.malformed("product id must be lowercase a-z0-9") }
+        guard (1...64).contains(productLength) else {
+            throw LicenseInvalidReason.malformed("bad product length")
+        }
+        let productData = try take(productLength)
+        guard productData.allSatisfy({ asciiProductByte($0) }),
+              let product = String(data: productData, encoding: .ascii) else {
+            throw LicenseInvalidReason.malformed("product id must be lowercase a-z0-9")
+        }
         let keyID = try take(4).reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
         let issuedDay = try take(2).reduce(UInt16(0)) { $0 << 8 | UInt16($1) }
         let flags = try take(1)[0]
-        guard flags & ~0b11 == 0 else { throw LicenseInvalidReason.malformed("unknown flag bits") }
-        let expires: UInt16? = flags & 0b01 != 0 ? try take(2).reduce(UInt16(0)) { $0 << 8 | UInt16($1) } : nil
-        let updates: UInt16? = flags & 0b10 != 0 ? try take(2).reduce(UInt16(0)) { $0 << 8 | UInt16($1) } : nil
-        guard cursor == body.endIndex else { throw LicenseInvalidReason.malformed("trailing bytes") }
-
+        guard flags & ~0b11 == 0 else {
+            throw LicenseInvalidReason.malformed("unknown flag bits")
+        }
+        let expires: UInt16? = flags & 0b01 != 0
+            ? try take(2).reduce(UInt16(0)) { $0 << 8 | UInt16($1) } : nil
+        let updates: UInt16? = flags & 0b10 != 0
+            ? try take(2).reduce(UInt16(0)) { $0 << 8 | UInt16($1) } : nil
+        guard cursor == body.endIndex else {
+            throw LicenseInvalidReason.malformed("trailing bytes")
+        }
         return LicensePayload(
             version: version, product: product, keyID: keyID, issuedDay: issuedDay,
             expiresDurationDays: expires, updatesDurationDays: updates,
-            signedBytes: Data(body), signature: Data(signature)
-        )
+            signedBytes: Data(body), signature: Data(signature))
     }
 }
 
-// MARK: - Signed denylist
+// MARK: - Signed denylist v1
 
-struct Denylist {
+private struct DenylistDocument: Decodable {
+    struct Entry: Decodable {
+        let keyID: UInt32
+        let note: String?
+        enum CodingKeys: String, CodingKey { case keyID = "key_id", note }
+    }
+    let format: String
+    let product: String
+    let sequence: UInt32
+    let revoked: [Entry]
+    let signature: String
+}
+
+private struct Denylist {
     struct Entry { let keyID: UInt32; let note: String? }
+    let sequence: UInt32
     let revoked: [Entry]
 
-    /// Loads and verifies `<product>.denylist.json`. The signature covers
-    /// "indielicense-denylist-v1", the product, and the ascending key ids,
-    /// joined by "\n" (notes are informational and unsigned — see SPEC.md).
-    static func load(from url: URL, product: String, publicKeyBase64: String) -> Result<Denylist, LicenseInvalidReason> {
-        guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              json["format"] as? String == "indielicense-denylist-v1",
-              let listProduct = json["product"] as? String,
-              let entries = json["revoked"] as? [[String: Any]],
-              let signatureBase64 = json["signature"] as? String,
-              let signature = Data(base64Encoded: signatureBase64)
-        else { return .failure(.badDenylist("unreadable or wrong shape")) }
-        guard listProduct == product else { return .failure(.badDenylist("denylist is for '\(listProduct)'")) }
-
-        var revoked: [Entry] = []
-        for entry in entries {
-            guard let id = entry["key_id"] as? Int, id >= 0, id <= UInt32.max
-            else { return .failure(.badDenylist("bad key_id")) }
-            revoked.append(Entry(keyID: UInt32(id), note: entry["note"] as? String))
+    static func load(
+        from url: URL, product: String, publicKeyBase64: String
+    ) -> Result<Denylist, LicenseInvalidReason> {
+        do {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values.isRegularFile == true, let size = values.fileSize, size <= 2_000_000 else {
+                return .failure(.badDenylist("file must be a regular file no larger than 2 MB"))
+            }
+            let data = try Data(contentsOf: url)
+            let document = try JSONDecoder().decode(DenylistDocument.self, from: data)
+            guard document.format == "indielicense-denylist-v1" else {
+                return .failure(.badDenylist("unsupported denylist format"))
+            }
+            guard document.product == product else {
+                return .failure(.badDenylist("denylist is for '\(document.product)'"))
+            }
+            guard document.sequence >= 1, document.revoked.count <= 100_000 else {
+                return .failure(.badDenylist("invalid sequence or too many entries"))
+            }
+            guard document.revoked.allSatisfy({ ($0.note?.utf8.count ?? 0) <= 4_096 }) else {
+                return .failure(.badDenylist("note exceeds 4096 UTF-8 bytes"))
+            }
+            let sorted = document.revoked.sorted { $0.keyID < $1.keyID }
+            guard zip(sorted, sorted.dropFirst()).allSatisfy({ $0.keyID != $1.keyID }) else {
+                return .failure(.badDenylist("duplicate key_id"))
+            }
+            let signature = strictBase64(document.signature, expectedBytes: 64)
+            let keyData = strictBase64(publicKeyBase64, expectedBytes: 32)
+            guard let signature, let keyData,
+                  let verifier = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData),
+                  verifier.isValidSignature(
+                    signature,
+                    for: denylistMessage(
+                        product: product, sequence: document.sequence, entries: sorted)) else {
+                return .failure(.badDenylist("signature does not verify"))
+            }
+            return .success(Denylist(
+                sequence: document.sequence,
+                revoked: sorted.map { Entry(keyID: $0.keyID, note: $0.note) }))
+        } catch {
+            return .failure(.badDenylist("unreadable or wrong shape: \(error)"))
         }
-        revoked.sort { $0.keyID < $1.keyID }
-
-        let message = (["indielicense-denylist-v1", product] + revoked.map { String($0.keyID) })
-            .joined(separator: "\n")
-        guard let keyData = Data(base64Encoded: publicKeyBase64),
-              let verifier = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData),
-              verifier.isValidSignature(signature, for: Data(message.utf8))
-        else { return .failure(.badDenylist("signature does not verify")) }
-        return .success(Denylist(revoked: revoked))
     }
+}
+
+private func denylistMessage(
+    product: String, sequence: UInt32, entries: [DenylistDocument.Entry]
+) -> Data {
+    let lines = ["indielicense-denylist-v1", product, String(sequence)] + entries.map {
+        let encodedNote = $0.note.map { "+" + Data($0.utf8).base64EncodedString() } ?? "-"
+        return "\($0.keyID)\t\(encodedNote)"
+    }
+    return Data(lines.joined(separator: "\n").utf8)
 }
 
 // MARK: - Keychain persistence
 
-/// Persists the pasted license key and per-key activation dates in the user's
-/// Keychain, so both survive reinstalls. No clock-rollback guards, by design.
-public final class LicenseStore: LicenseActivationDateStore {
+public final class LicenseStore: LicenseStateStore {
     public static let shared = LicenseStore()
+    private static let operationLock = NSLock()
     private let service: String
 
     public init(service: String? = nil) {
-        self.service = service ?? "IndieLicense:" + (Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName)
+        self.service = service ?? "IndieLicense:" +
+            (Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName)
     }
 
-    /// Persist the key the customer pasted, so you can re-validate on launch.
-    public func save(key: String) { write(account: "license-key", value: key) }
-    public func load() -> String? { read(account: "license-key") }
+    public func save(key: String) throws {
+        try Self.operationLock.withLock { try upsert(account: "license-key", value: key) }
+    }
 
-    /// First call stamps today's date (plain `Date()`); every later call
-    /// returns that same stored date. This anchors trial/update windows to
-    /// the customer's activation, not to when the key batch was generated.
-    public func activatedAt(for keyID: UInt32) -> Date {
-        let account = "activated:\(keyID)"
-        if let stored = read(account: account), let day = Int(stored) {
+    public func load() throws -> String? {
+        try Self.operationLock.withLock { try read(account: "license-key") }
+    }
+
+    public func activatedAt(for licenseIdentifier: String) throws -> Date {
+        try Self.operationLock.withLock {
+            let account = "activated:\(licenseIdentifier)"
+            if let stored = try read(account: account) {
+                guard let day = Int(stored) else { throw StoreError.corrupt(account) }
+                return date(ofUnixDay: day)
+            }
+            let today = unixDay(of: Date())
+            let inserted = try insertIfAbsent(account: account, value: String(today))
+            if inserted { return date(ofUnixDay: today) }
+            guard let stored = try read(account: account), let day = Int(stored) else {
+                throw StoreError.corrupt(account)
+            }
             return date(ofUnixDay: day)
         }
-        let today = unixDay(of: Date())
-        write(account: account, value: String(today))
-        return date(ofUnixDay: today)
+    }
+
+    public func highestDenylistSequence(for productIdentifier: String) throws -> UInt32? {
+        try Self.operationLock.withLock {
+            guard let stored = try read(account: "denylist:\(productIdentifier)") else { return nil }
+            guard let sequence = UInt32(stored), sequence >= 1 else {
+                throw StoreError.corrupt("denylist:\(productIdentifier)")
+            }
+            return sequence
+        }
+    }
+
+    public func recordDenylistSequence(_ sequence: UInt32, for productIdentifier: String) throws {
+        guard sequence >= 1 else { throw StoreError.corrupt("denylist sequence") }
+        try Self.operationLock.withLock {
+            let account = "denylist:\(productIdentifier)"
+            if let stored = try read(account: account) {
+                guard let current = UInt32(stored) else { throw StoreError.corrupt(account) }
+                guard sequence >= current else { throw StoreError.rollback }
+                if sequence == current { return }
+            }
+            try upsert(account: account, value: String(sequence))
+        }
     }
 
     private func query(account: String) -> [String: Any] {
@@ -302,40 +372,120 @@ public final class LicenseStore: LicenseActivationDateStore {
          kSecAttrService as String: service,
          kSecAttrAccount as String: account]
     }
-    private func read(account: String) -> String? {
+
+    private func read(account: String) throws -> String? {
         var q = query(account: account)
         q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(q as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            throw StoreError.status("read", status)
+        }
+        return value
     }
-    private func write(account: String, value: String) {
-        SecItemDelete(query(account: account) as CFDictionary)
+
+    private func insertIfAbsent(account: String, value: String) throws -> Bool {
         var q = query(account: account)
         q[kSecValueData as String] = Data(value.utf8)
-        SecItemAdd(q as CFDictionary, nil)
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let status = SecItemAdd(q as CFDictionary, nil)
+        if status == errSecDuplicateItem { return false }
+        guard status == errSecSuccess else { throw StoreError.status("insert", status) }
+        return true
+    }
+
+    private func upsert(account: String, value: String) throws {
+        if try insertIfAbsent(account: account, value: value) { return }
+        let attributes = [kSecValueData as String: Data(value.utf8)]
+        let status = SecItemUpdate(query(account: account) as CFDictionary, attributes as CFDictionary)
+        guard status == errSecSuccess else { throw StoreError.status("update", status) }
     }
 }
 
-// MARK: - Small shared helpers
+private enum StoreError: Error, CustomStringConvertible {
+    case status(String, OSStatus)
+    case corrupt(String)
+    case rollback
+    var description: String {
+        switch self {
+        case .status(let operation, let status): return "Keychain \(operation) failed (OSStatus \(status))"
+        case .corrupt(let account): return "Keychain value '\(account)' is corrupt"
+        case .rollback: return "denylist sequence rollback"
+        }
+    }
+}
 
-/// All date math is whole UTC days: unixDay = floor(secondsSinceEpoch / 86400).
-/// A window is inclusive of its last day (expired only when now is PAST it).
-func unixDay(of date: Date) -> Int { Int(floor(date.timeIntervalSince1970 / 86400)) }
-func date(ofUnixDay day: Int) -> Date { Date(timeIntervalSince1970: Double(day) * 86400) }
+// MARK: - Helpers
 
-/// Crockford base32 (no I, L, O, U): case-insensitive, O→0, I/L→1, dashes ignored.
-func crockfordDecode(_ text: String) throws -> Data {
-    let alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-    var values: [Character: UInt32] = ["O": 0, "I": 1, "L": 1]
-    for (i, c) in alphabet.enumerated() { values[c] = UInt32(i) }
+private func isFiniteDate(_ date: Date) -> Bool { date.timeIntervalSince1970.isFinite }
+private func unixDay(of date: Date) -> Int { Int(floor(date.timeIntervalSince1970 / 86_400)) }
+private func date(ofUnixDay day: Int) -> Date {
+    Date(timeIntervalSince1970: Double(day) * 86_400)
+}
+private func asciiProductByte(_ byte: UInt8) -> Bool {
+    (97...122).contains(byte) || (48...57).contains(byte)
+}
+private func isValidProductID(_ value: String) -> Bool {
+    let bytes = Array(value.utf8)
+    return (1...64).contains(bytes.count) && bytes.allSatisfy(asciiProductByte)
+}
+private func strictBase64(_ text: String, expectedBytes: Int) -> Data? {
+    guard let data = Data(base64Encoded: text), data.count == expectedBytes,
+          data.base64EncodedString() == text else { return nil }
+    return data
+}
+private func stableIdentifier(fields: [Data]) -> String {
+    var input = Data()
+    for field in fields {
+        var length = UInt64(field.count).bigEndian
+        withUnsafeBytes(of: &length) { input.append(contentsOf: $0) }
+        input.append(field)
+    }
+    return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
+}
 
-    var accumulator: UInt32 = 0, bits = 0
+private func crockfordDecode(_ text: String) throws -> Data {
+    var accumulator: UInt32 = 0
+    var bits = 0
     var out = Data()
-    for character in text.uppercased() where character != "-" {
-        guard let value = values[character]
-        else { throw LicenseInvalidReason.malformed("invalid character '\(character)'") }
+    for byte in text.utf8 {
+        let upper: UInt8
+        switch byte {
+        case 97...122: upper = byte - 32
+        default: upper = byte
+        }
+        let value: UInt32
+        switch upper {
+        case 48...57: value = UInt32(upper - 48)
+        case 65: value = 10
+        case 66: value = 11
+        case 67: value = 12
+        case 68: value = 13
+        case 69: value = 14
+        case 70: value = 15
+        case 71: value = 16
+        case 72: value = 17
+        case 74: value = 18
+        case 75: value = 19
+        case 77: value = 20
+        case 78: value = 21
+        case 80: value = 22
+        case 81: value = 23
+        case 82: value = 24
+        case 83: value = 25
+        case 84: value = 26
+        case 86: value = 27
+        case 87: value = 28
+        case 88: value = 29
+        case 89: value = 30
+        case 90: value = 31
+        case 79: value = 0
+        case 73, 76: value = 1
+        default: throw LicenseInvalidReason.malformed("invalid non-Crockford character")
+        }
         accumulator = accumulator << 5 | value
         bits += 5
         if bits >= 8 {
@@ -343,9 +493,18 @@ func crockfordDecode(_ text: String) throws -> Data {
             out.append(UInt8(truncatingIfNeeded: accumulator >> UInt32(bits)))
         }
     }
-    // Trailing padding bits must be zero, or the string was corrupted.
-    guard accumulator & ((1 << bits) - 1) == 0 else { throw LicenseInvalidReason.malformed("bad trailing bits") }
+    let mask: UInt32 = bits == 0 ? 0 : (UInt32(1) << UInt32(bits)) - 1
+    guard accumulator & mask == 0 else {
+        throw LicenseInvalidReason.malformed("bad trailing bits")
+    }
     return out
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock(); defer { unlock() }
+        return try body()
+    }
 }
 
 extension LicenseInvalidReason: Error {}

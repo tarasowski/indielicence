@@ -7,9 +7,13 @@ node_modules/
 # NEVER commit key material or generated customer keys
 *.private
 *.state
+*.state.lock
 *.denylist.json
+*.denylist.lock
 keys.csv
 *.keys.csv
+*.license-keys.csv
+*.csv
 
 # macOS noise
 .DS_Store

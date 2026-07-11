@@ -24,17 +24,18 @@ struct IndieLicenseCLI: ParsableCommand {
 
 struct KeyDirOption: ParsableArguments {
     @Option(name: .customLong("key-dir"), help: "Directory holding the private key and its sidecar files.")
-    var keyDir: String = "."
+    var keyDir: String = "~/Licensing"
 
     var directory: KeyDirectory { KeyDirectory(path: keyDir) }
 
     /// Most devs have one product per key dir — infer it when unambiguous.
     func resolveProduct(_ explicit: String?) throws -> String {
         if let explicit { try validateProductID(explicit); return explicit }
+        try directory.validateForSecretUse()
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.url.path)) ?? []
         let products = names.filter { $0.hasSuffix(".private") }.map { String($0.dropLast(".private".count)) }
         switch products.count {
-        case 1: return products[0]
+        case 1: try validateProductID(products[0]); return products[0]
         case 0: throw CLIError.message("no .private key file in \(directory.url.path) — run `indielicense init` first or pass --key-dir")
         default: throw CLIError.message("multiple products in \(directory.url.path) (\(products.sorted().joined(separator: ", "))) — pass --product")
         }
@@ -55,22 +56,25 @@ struct Init: ParsableCommand {
     func run() throws {
         try validateProductID(product)
         let privateKey = Curve25519.Signing.PrivateKey()
-        try keyDirOption.directory.writePrivateKey(privateKey, product: product)
+        try keyDirOption.directory.initializeProduct(privateKey, product: product)
         let keyPath = keyDirOption.directory.privateKeyURL(product: product).path
+        let statePath = keyDirOption.directory.stateURL(product: product).path
         let publicKey = privateKey.publicKey.rawRepresentation.base64EncodedString()
 
         print("""
         Created keypair for '\(product)'.
 
         Private key: \(keyPath)  (permissions 0600)
+        Key-id state: \(statePath)  (permissions 0600)
 
           ┌──────────────────────────────────────────────────────────────────┐
-          │  ⚠  BACK UP THIS FILE NOW — put it in your password manager.     │
+          │  ⚠  BACK UP BOTH FILES NOW using encrypted storage.              │
           │                                                                  │
           │  If it is LOST, you can never mint keys for shipped app          │
           │  versions again. If it LEAKS, anyone can mint valid keys.        │
           │  It never needs to leave this machine and must NEVER be          │
           │  bundled into your app.                                          │
+          │  Keep state backups current; stale state can reuse customer ids.  │
           └──────────────────────────────────────────────────────────────────┘
 
         Public key (embed this in your app — safe to ship):
@@ -123,7 +127,9 @@ struct Generate: ParsableCommand {
     @OptionGroup var keyDirOption: KeyDirOption
 
     func run() throws {
-        guard count >= 1 else { throw CLIError.message("--count must be at least 1") }
+        guard (1...100_000).contains(count) else {
+            throw CLIError.message("--count must be between 1 and 100,000")
+        }
 
         var expiresDays: UInt16?
         var updatesDays: UInt16?
@@ -144,13 +150,12 @@ struct Generate: ParsableCommand {
         let directory = keyDirOption.directory
         let resolvedProduct = try keyDirOption.resolveProduct(product)
         let privateKey = try directory.loadPrivateKey(product: resolvedProduct)
-        let firstID = try directory.nextKeyID(product: resolvedProduct)
-        guard UInt32.max - firstID >= UInt32(count) else { throw CLIError.message("key id space exhausted") }
+        let reservedIDs = try directory.reserveKeyIDs(count: count, product: resolvedProduct)
 
-        let issuedDay = todayUnixDay()
+        let issuedDay = try todayUnixDay()
         var rows: [String] = []
-        for offset in 0..<count {
-            let keyID = firstID + UInt32(offset)
+        for reservedID in reservedIDs {
+            let keyID = UInt32(reservedID)
             let key = try mintKey(
                 privateKey: privateKey, product: resolvedProduct, keyID: keyID,
                 issuedDay: issuedDay, expiresDurationDays: expiresDays, updatesDurationDays: updatesDays)
@@ -160,22 +165,12 @@ struct Generate: ParsableCommand {
             ].joined(separator: ","))
         }
 
-        // Persist the counter BEFORE emitting keys: a crash must never lead
-        // to a key id being handed out twice.
-        try directory.saveNextKeyID(firstID + UInt32(count), product: resolvedProduct)
-
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
-        let header = "key_id,license_key,issued_at,mode,expires_duration_days,updates_duration_days"
         let body = rows.joined(separator: "\n") + "\n"
-        if let handle = try? FileHandle(forWritingTo: outURL) {
-            defer { try? handle.close() }
-            try handle.seekToEnd()
-            try handle.write(contentsOf: Data(body.utf8))
-        } else {
-            try (header + "\n" + body).write(to: outURL, atomically: true, encoding: .utf8)
-        }
+        try appendSecureCSV(Data(body.utf8), to: outURL)
 
-        let lastID = firstID + UInt32(count) - 1
+        let firstID = reservedIDs.lowerBound
+        let lastID = reservedIDs.upperBound - 1
         print("Minted \(count) \(mode.rawValue) key\(count == 1 ? "" : "s") for '\(resolvedProduct)' (ids \(firstID)–\(lastID)) → \(outURL.path)")
     }
 }
@@ -203,7 +198,8 @@ struct Verify: ParsableCommand {
 
         let publicKey: Curve25519.Signing.PublicKey
         if let publicKeyBase64 {
-            guard let raw = Data(base64Encoded: publicKeyBase64),
+            guard let raw = Data(base64Encoded: publicKeyBase64), raw.count == 32,
+                  raw.base64EncodedString() == publicKeyBase64,
                   let parsed = try? Curve25519.Signing.PublicKey(rawRepresentation: raw) else {
                 throw CLIError.message("--public-key is not valid base64-encoded Ed25519 key material")
             }
@@ -220,9 +216,10 @@ struct Verify: ParsableCommand {
         // Check the local denylist if one exists next to the key material.
         let denylistURL = keyDirOption.directory.denylistURL(product: payload.product)
         if FileManager.default.fileExists(atPath: denylistURL.path) {
-            let denylist = try DenylistFile.load(from: denylistURL, product: payload.product)
+            let denylist = try DenylistFile.load(
+                from: denylistURL, product: payload.product, publicKey: publicKey)
             if let entry = denylist.revoked.first(where: { $0.keyID == payload.keyID }) {
-                let note = entry.note.map { " (\($0))" } ?? ""
+                let note = entry.note.map { " (\(terminalSafe($0)))" } ?? ""
                 print("INVALID: key id \(payload.keyID) is on the denylist\(note)")
                 throw ExitCode(1)
             }
@@ -292,28 +289,30 @@ struct Revoke: ParsableCommand {
         let directory = keyDirOption.directory
         let resolvedProduct = try keyDirOption.resolveProduct(product)
         let denylistURL = directory.denylistURL(product: resolvedProduct)
-        var denylist = try DenylistFile.load(from: denylistURL, product: resolvedProduct)
+        let privateKey = try directory.loadPrivateKey(product: resolvedProduct)
+        try directory.withDenylistLock(product: resolvedProduct) {
+            var denylist = try DenylistFile.load(
+                from: denylistURL, product: resolvedProduct, publicKey: privateKey.publicKey)
 
-        if list {
-            guard !denylist.revoked.isEmpty else {
-                print("Denylist for '\(resolvedProduct)' is empty.")
+            if list {
+                guard !denylist.revoked.isEmpty else {
+                    print("Denylist for '\(resolvedProduct)' is empty.")
+                    return
+                }
+                print("Denylist for '\(resolvedProduct)' sequence \(denylist.sequence) (\(denylist.revoked.count) entr\(denylist.revoked.count == 1 ? "y" : "ies")):")
+                for entry in denylist.revoked.sorted(by: { $0.keyID < $1.keyID }) {
+                    print("  #\(entry.keyID)\(entry.note.map { "  — \(terminalSafe($0))" } ?? "")")
+                }
                 return
             }
-            print("Denylist for '\(resolvedProduct)' (\(denylist.revoked.count) entr\(denylist.revoked.count == 1 ? "y" : "ies")):")
-            for entry in denylist.revoked.sorted(by: { $0.keyID < $1.keyID }) {
-                print("  #\(entry.keyID)\(entry.note.map { "  — \($0)" } ?? "")")
-            }
-            return
-        }
 
-        guard let keyID else { throw CLIError.message("pass a key id to revoke, or --list to view the denylist") }
-        guard !denylist.revoked.contains(where: { $0.keyID == keyID }) else {
-            throw CLIError.message("key id \(keyID) is already on the denylist")
+            guard let keyID else {
+                throw CLIError.message("pass a key id to revoke, or --list to view the denylist")
+            }
+            try denylist.appendRevocation(keyID: keyID, note: note)
+            try denylist.write(to: denylistURL, privateKey: privateKey)
+            print("Revoked key id \(keyID)\(note.map { " (\(terminalSafe($0)))" } ?? "") → \(denylistURL.path)")
+            print("Bundle this file into your next app release to enforce it.")
         }
-        denylist.revoked.append((keyID: keyID, note: note))
-        let privateKey = try directory.loadPrivateKey(product: resolvedProduct)
-        try denylist.write(to: denylistURL, privateKey: privateKey)
-        print("Revoked key id \(keyID)\(note.map { " (\($0))" } ?? "") → \(denylistURL.path)")
-        print("Bundle this file into your next app release to enforce it.")
     }
 }
