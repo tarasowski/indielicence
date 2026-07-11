@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Universal binary → GitHub Release
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build universal binary (arm64 + x86_64)
+        run: |
+          swift build -c release --arch arm64 --arch x86_64 --product indielicense
+          BIN=.build/apple/Products/Release/indielicense
+          lipo -info "$BIN"
+          mkdir -p dist
+          cp "$BIN" dist/indielicense
+
+      # Ad-hoc signing keeps Gatekeeper happy for local use; maintainers with a
+      # Developer ID can replace this step with a real identity + notarization:
+      #   codesign --sign "Developer ID Application: …" --options runtime dist/indielicense
+      #   xcrun notarytool submit … --wait
+      - name: Sign (ad-hoc; see comment for Developer ID + notarization)
+        run: codesign --force --sign - dist/indielicense
+
+      - name: Smoke test
+        run: dist/indielicense --version
+
+      - name: Package
+        run: |
+          cd dist
+          tar czf "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz" indielicense
+          shasum -a 256 "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz" > \
+            "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz.sha256"
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/indielicense-*.tar.gz
+            dist/indielicense-*.tar.gz.sha256
+          generate_release_notes: true

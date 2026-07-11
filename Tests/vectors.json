@@ -1,0 +1,74 @@
+{
+  "comment": "Shared test vectors for IndieLicense verifiers. Regenerate with Tools/make-vectors.mjs. The keypair is public test material only.",
+  "seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "public_key_base64": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "product": "pixelpro",
+  "issued_day": 20645,
+  "issued_at": "2026-07-11",
+  "cases": [
+    {
+      "name": "lifetime_valid",
+      "expect": "valid",
+      "key_id": 1,
+      "mode": "lifetime",
+      "key": "PIXELPRO-04470-TBRCN-P70WK-F0000-00AGM-M09R5-S64GF-H3KSG-VQVQ4-DQ4C4-2BTZ0-KX5SF-F1QAA-WRREA-H17WD-ZTEX5-HBQMA-6JS7J-0JKNJ-7B5C0-HYNYX-GS7T6-NB99P-RC71W-W0RH5-F9Q10"
+    },
+    {
+      "name": "updates_365_valid",
+      "expect": "valid",
+      "key_id": 2,
+      "mode": "updates",
+      "updates_duration_days": 365,
+      "key": "PIXELPRO-04470-TBRCN-P70WK-F0000-00JGM-M102V-ETA3H-DTFN3-MJVD5-QNPSR-TZXFV-6APJZ-NH21F-N98YA-NXVHY-04YCA-Q8GMZ-9BV8Y-7HF4K-5VE4P-88NVA-2HX35-Y2Q4H-E7ZGA-HE4VQ-7EEJM-R0Y"
+    },
+    {
+      "name": "trial_14_valid",
+      "expect": "valid",
+      "key_id": 3,
+      "mode": "trial",
+      "expires_duration_days": 14,
+      "key": "PIXELPRO-04470-TBRCN-P70WK-F0000-00TGM-M0G03-Q6W2E-4J5QH-507H4-25X4V-0J46Q-3BMA8-9XKN3-CM3VS-B3VCY-YS4V3-GY0H4-BYKYK-HARPM-V3PNJ-3A75S-CQJ13-7HV63-1B533-B3R0A-7FBM6-XGT"
+    },
+    {
+      "name": "tampered_key_id",
+      "expect": "bad_signature",
+      "key_id": 4,
+      "key": "PIXELPRO-04470-TBRCN-P70WK-F0000-01AGM-M0EXQ-8HSCN-NHP1W-B4MZB-KA3TH-RFZH6-JZ485-PVG6K-C9DJ1-Z07JD-Z32V5-4AJFP-X2KNA-YJ1KX-T8XNE-E6A07-WZ4AS-ZJTBD-1KMK8-DCX42-B3T10"
+    },
+    {
+      "name": "wrong_product",
+      "expect": "wrong_product",
+      "key_id": 5,
+      "payload_product": "otherapp",
+      "key": "OTHERAPP-0446Y-X38CN-S62W3-G0000-01AGM-M08ZM-Q4G4P-BGPJ7-0XXTP-KCM11-W4WPN-PPEE2-53XPQ-ESRTZ-HBE16-3P0NQ-6SC26-HJA2X-FYNV5-7WJ21-NC24N-YKZDZ-ADNET-TH85X-4PQZN-NCD10"
+    },
+    {
+      "name": "revoked_key",
+      "expect": "revoked",
+      "key_id": 6,
+      "mode": "lifetime",
+      "key": "PIXELPRO-04470-TBRCN-P70WK-F0000-01JGM-M02BA-YAN42-T1RHR-QRJPG-7Z5PP-C4DYZ-C0H0Z-NY4XZ-0S1JP-NY4ZK-JF7H1-09VX1-2MVPA-JZYRR-W1G7T-00EXF-33Y8Q-2M484-M4TCG-JGRHY-HZV0R"
+    },
+    {
+      "name": "garbage",
+      "expect": "malformed",
+      "key": "PIXELPRO-THIS0-IS0N0-TAKEY"
+    },
+    {
+      "name": "unsupported_version",
+      "expect": "unsupported_version",
+      "key": "PIXELPRO-14470-TBRCN-P70WK-F0000-01TGM-M0BRD-GSQFB-H4FMN-CNFCC-AZ7R8-K9RZ7-W7JWG-DYVHC-3QS14-5GE8K-PAA56-8KPQ7-HT28P-558B5-1ZA4X-RJTQ9-VP4ZA-6CGHK-5SVBZ-K66G3-CSV1G"
+    }
+  ],
+  "denylist": {
+    "format": "indielicense-denylist-v1",
+    "product": "pixelpro",
+    "revoked": [
+      {
+        "key_id": 6,
+        "note": "test vector: refunded"
+      }
+    ],
+    "signature": "fkpFQgjYJGL/p6KRRPdkYRV1ZiJLHLhY38HzhKBFqMINEJPkyQneQg6b1DoQ+XwvC6Jc3hphpWzKrunoN8xFCA=="
+  }
+}

@@ -1,0 +1,15 @@
+# Build artifacts
+.build/
+.swiftpm/
+dist/
+node_modules/
+
+# NEVER commit key material or generated customer keys
+*.private
+*.state
+*.denylist.json
+keys.csv
+*.keys.csv
+
+# macOS noise
+.DS_Store

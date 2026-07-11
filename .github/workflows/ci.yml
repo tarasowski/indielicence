@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Build & test (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Swift tests (library, CLI, shared vectors)
+        run: swift test
+
+      - name: JS verifier against shared vectors
+        run: node --test Tests/verify.test.mjs
+
+      - name: Vectors are reproducible from the generator
+        run: |
+          node Tools/make-vectors.mjs > /tmp/vectors.json
+          diff Tests/vectors.json /tmp/vectors.json
+
+      - name: End-to-end demo
+        run: Examples/demo.sh
+
+      - name: No network calls anywhere in the codebase
+        run: |
+          ! grep -rnE 'URLSession|NWConnection|CFNetwork|node:https?"| fetch\(' \
+              Sources Verifier --include='*.swift' --include='*.mjs'
