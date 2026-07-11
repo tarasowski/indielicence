@@ -355,6 +355,22 @@ final class CLITests: FixedKeyTestCase {
             .split(separator: "\n").map(String.init)
     }
 
+    func runIntegrate(
+        output: URL, ui: String = "none", denylist: String = "none",
+        publicKey: String? = nil
+    ) throws {
+        var arguments = [
+            "swift", "--product", "pixelpro", "--build-date", "2026-07-11",
+            "--output", output.path, "--ui", ui, "--denylist", denylist,
+        ]
+        if let publicKey {
+            arguments += ["--public-key", publicKey]
+        } else {
+            arguments += ["--key-dir", tempDir.path]
+        }
+        try Integrate.parse(arguments).run()
+    }
+
     func testCSVOutputAllFields() throws {
         try writeFixedPrivateKey()
         try runGenerate(["--count", "2", "--mode", "trial", "--expires", "14d"])
@@ -416,6 +432,73 @@ final class CLITests: FixedKeyTestCase {
         let initCommand = try Init.parse(["--product", "demoapp", "--key-dir", tempDir.path])
         try initCommand.run()
         XCTAssertThrowsError(try initCommand.run(), "second init must refuse to overwrite the private key")
+    }
+
+    func testIntegrateGeneratesGeneralizedAppOwnedSwiftFiles() throws {
+        try writeFixedPrivateKey()
+        let output = tempDir.appendingPathComponent("GeneratedLicense")
+        try runIntegrate(output: output, ui: "swiftui", denylist: "bundled")
+
+        let names = try FileManager.default.contentsOfDirectory(atPath: output.path).sorted()
+        XCTAssertEqual(names, [
+            "LICENSE_INTEGRATION.md", "LicenseActivationView.swift",
+            "LicenseConfig.swift", "LicenseManager.swift", "LicenseVerifier.swift",
+        ])
+
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let product = \"pixelpro\""))
+        XCTAssertTrue(config.contains(publicKeyBase64))
+        XCTAssertTrue(config.contains("TimeInterval(20645)"))
+        XCTAssertTrue(config.contains("pixelpro.denylist"))
+
+        let manager = try String(
+            contentsOf: output.appendingPathComponent("LicenseManager.swift"), encoding: .utf8)
+        XCTAssertTrue(manager.contains("func activate(key: String) -> Bool"))
+        XCTAssertTrue(manager.contains("case renewalRequired(until: Date)"))
+
+        let allGenerated = try names.map {
+            try String(contentsOf: output.appendingPathComponent($0), encoding: .utf8)
+        }.joined(separator: "\n")
+        XCTAssertFalse(allGenerated.contains("{{"), "all template placeholders must be resolved")
+        XCTAssertFalse(allGenerated.contains(".private"), "generated app files must never name private material")
+        XCTAssertFalse(allGenerated.contains(tempDir.path), "generated files must not leak local paths")
+
+        let verifier = try Data(contentsOf: output.appendingPathComponent("LicenseVerifier.swift"))
+        XCTAssertEqual(verifier, Data(EmbeddedTemplates.verifier.utf8))
+    }
+
+    func testIntegrateAcceptsPublicKeyWithoutKeyDirectoryAndOmitsOptionalUI() throws {
+        let output = tempDir.appendingPathComponent("PublicOnly")
+        try runIntegrate(output: output, publicKey: publicKeyBase64)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: output.appendingPathComponent("LicenseManager.swift").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: output.appendingPathComponent("LicenseActivationView.swift").path))
+    }
+
+    func testIntegrateRefusesOverwriteBeforeWritingAnything() throws {
+        let output = tempDir.appendingPathComponent("Existing")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let existing = output.appendingPathComponent("LicenseConfig.swift")
+        try "keep me\n".write(to: existing, atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(
+            try runIntegrate(output: output, publicKey: publicKeyBase64))
+        XCTAssertEqual(
+            try String(contentsOf: existing, encoding: .utf8), "keep me\n")
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: output.path),
+            ["LicenseConfig.swift"])
+    }
+
+    func testIntegrateRejectsInvalidConfigurationWithoutCreatingOutput() throws {
+        let output = tempDir.appendingPathComponent("Invalid")
+        XCTAssertThrowsError(try Integrate.parse([
+            "swift", "--product", "pixelpro", "--public-key", publicKeyBase64,
+            "--build-date", "2026-02-30", "--output", output.path,
+        ]).run())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
     }
 
     func testConcurrentInitCreatesExactlyOneKeypair() throws {
@@ -506,5 +589,21 @@ final class SingleFileSyncTests: XCTestCase {
         let library = try Data(contentsOf: repoRoot.appendingPathComponent("Sources/IndieLicense/LicenseVerifier.swift"))
         XCTAssertEqual(canonical, library,
             "Verifier/LicenseVerifier.swift and Sources/IndieLicense/LicenseVerifier.swift must stay byte-identical — copy one over the other")
+    }
+
+    func testEmbeddedScaffoldMatchesCanonicalSources() throws {
+        let pairs: [(String, String)] = [
+            (EmbeddedTemplates.verifier, "Verifier/LicenseVerifier.swift"),
+            (EmbeddedTemplates.licenseConfig, "Templates/Swift/LicenseConfig.swift.template"),
+            (EmbeddedTemplates.licenseManager, "Templates/Swift/LicenseManager.swift.template"),
+            (EmbeddedTemplates.activationView, "Templates/Swift/LicenseActivationView.swift.template"),
+            (EmbeddedTemplates.integrationGuide, "Templates/Swift/LICENSE_INTEGRATION.md.template"),
+        ]
+        for (embedded, path) in pairs {
+            XCTAssertEqual(
+                Data(embedded.utf8),
+                try Data(contentsOf: repoRoot.appendingPathComponent(path)),
+                "run `swift Tools/embed-templates.swift` after changing \(path)")
+        }
     }
 }

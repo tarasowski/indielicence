@@ -1,0 +1,38 @@
+# IndieLicense integration
+
+These files are ordinary source code owned by this app. There is no runtime
+service, account, telemetry, or network call.
+
+Generated configuration:
+
+- Product: `{{PRODUCT}}`
+- Release build date: `{{BUILD_DATE}}` UTC
+- Key persistence: macOS Keychain
+- Denylist: {{DENYLIST_DESCRIPTION}}
+- SwiftUI activation view: {{UI_DESCRIPTION}}
+
+## Wire it into the app
+
+1. Add every generated `.swift` file to the application target.
+2. Create one long-lived `LicenseManager` at app startup.
+3. Gate paid behavior with `license.isLicensed`.
+4. Present your own key-entry UI, or `LicenseActivationView` when generated.
+5. Keep checkout, prices, feature policy, copy, and localization in the app.
+6. Update `LicenseConfig.buildDate` to the immutable UTC release day before
+   every release. Never calculate it from `Date()` or file metadata.
+
+`LicenseManager` revalidates the Keychain value during initialization and fails
+closed on invalid configuration or inaccessible storage. `renewalRequired`
+means the key still covers eligible older releases but not this newer build.
+
+## Test before shipping
+
+- Valid key activates, persists, and remains active after relaunch.
+- Malformed, tampered, and wrong-product keys stay locked.
+- Trial expiry or update-window boundaries behave correctly for the key mode.
+- Storage/configuration failures fail closed.
+- A bundled signed denylist rejects a revoked key, when denylists are enabled.
+- Every paid feature checks the same license state.
+
+The private signing key and key-id state must remain outside the app repository.
+Only the public key in `LicenseConfig.swift` belongs in the shipped app.

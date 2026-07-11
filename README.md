@@ -16,9 +16,9 @@ If this repo disappears tomorrow, your keys and your app keep working.
 
 1. **`indielicense init --product pixelpro --key-dir ~/Licensing/pixelpro`** — creates your private
    key-minting key (back it up!) and prints the public key.
-2. **Integrate** — copy [`Verifier/LicenseVerifier.swift`](Verifier/LicenseVerifier.swift)
-   into your app (or add the SPM library) and paste in the public key. Ten
-   lines, shown below.
+2. **Integrate** — generate transparent, app-owned Swift plumbing with one
+   command (shown below), or copy [`Verifier/LicenseVerifier.swift`](Verifier/LicenseVerifier.swift)
+   manually for a custom integration.
 3. **`indielicense generate --count 500 --mode updates --updates-duration 365d --key-dir ~/Licensing/pixelpro`**
    — mints 500 keys into `keys.csv`.
 4. **Upload the CSV** to your payment platform. It emails one key per sale —
@@ -37,7 +37,44 @@ If this repo disappears tomorrow, your keys and your app keep working.
   (see [SPEC.md](SPEC.md)). The app checks: signature ✓, product ✓, not
   expired ✓, not revoked ✓. All offline, instant.
 
-## Integration (10 lines)
+## Fast Swift integration — generated source, not an SDK
+
+Generate the standalone verifier, public configuration, Keychain-backed
+manager, optional neutral SwiftUI key-entry view, and a short handoff guide:
+
+```sh
+indielicense integrate swift \
+  --product pixelpro \
+  --key-dir ~/Licensing/pixelpro \
+  --build-date 2026-07-11 \
+  --output ./MyApp/License \
+  --ui swiftui \
+  --denylist bundled
+```
+
+The generated `.swift` files belong to the app. There is no runtime SDK,
+service, telemetry, or network call. Existing files are never overwritten,
+and only the public key is embedded — private key material and key-id state
+remain in the secure key directory.
+
+Use `--ui none` when the app already has key-entry UI. Use `--denylist none`
+when revocation is not being bundled yet. An agent or CI environment that has
+only the safe public key can use `--public-key BASE64 --product pixelpro`
+instead of `--key-dir`.
+
+The output contains:
+
+- `LicenseVerifier.swift` — the canonical standalone verifier;
+- `LicenseConfig.swift` — public key, product, release build date, denylist;
+- `LicenseManager.swift` — launch validation, secure persistence, app state;
+- optional `LicenseActivationView.swift` — neutral and price-free;
+- `LICENSE_INTEGRATION.md` — wiring and test checklist.
+
+`LicenseManager` exposes `isLicensed` plus explicit unlicensed, renewal,
+invalid, and storage-failure states. The app still owns feature policy,
+checkout, pricing, UI copy, and localization.
+
+## Manual integration
 
 ```swift
 let validator = LicenseValidator(
@@ -62,9 +99,9 @@ The **first successful validation stamps the customer's activation date**
 (Keychain, survives reinstalls) — that's what starts trial/update windows,
 never the day you generated the CSV.
 
-Two integration paths, same code:
+Manual integration paths use the same verifier:
 
-- **Copy-paste (recommended):** drop [`Verifier/LicenseVerifier.swift`](Verifier/LicenseVerifier.swift)
+- **Copy-paste:** drop [`Verifier/LicenseVerifier.swift`](Verifier/LicenseVerifier.swift)
   into your project. One auditable file, only Apple system frameworks, no
   dependency to trust or update.
 - **SPM:** `.package(url: "https://github.com/tarasowski/indielicence", from: "1.0.0")`,
@@ -144,6 +181,10 @@ indielicense generate --count <n> --mode <lifetime|updates|trial>
                                             mint keys; ids continue across batches
 indielicense verify <key>                   full validation, exit 0/1
 indielicense inspect <key>                  decode a key, no key material needed
+indielicense integrate swift --product <id> --build-date YYYY-MM-DD
+                     --output <app-source-directory> [--ui none|swiftui]
+                     [--denylist none|bundled] [--public-key <base64>]
+                                            generate app-owned Swift plumbing
 indielicense revoke <key_id> [--note "refunded"] --key-dir <secure-directory>
                                             add to the signed denylist
 indielicense revoke --list --key-dir <secure-directory>

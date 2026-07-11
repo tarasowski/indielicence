@@ -1,0 +1,23 @@
+import Foundation
+
+/// Public, non-secret licensing configuration for this application.
+enum LicenseConfig {
+    /// Safe to ship. The matching private key must never enter the app repository.
+    static let publicKey = "{{PUBLIC_KEY}}"
+    static let product = "{{PRODUCT}}"
+
+    /// Immutable UTC release day. Update this for every app release.
+    /// Never replace this with Date(), executable metadata, or filesystem dates.
+    static let buildDate = Date(
+        timeIntervalSince1970: TimeInterval({{BUILD_DAY}}) * 86_400)
+
+    static let denylistURL: URL? = {{DENYLIST_URL}}
+
+    static func makeValidator() -> LicenseValidator {
+        LicenseValidator(
+            publicKey: publicKey,
+            product: product,
+            buildDate: buildDate,
+            denylist: denylistURL)
+    }
+}
