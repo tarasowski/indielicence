@@ -1,0 +1,78 @@
+import Combine
+import Foundation
+
+/// App-facing state derived from full offline validation.
+enum AppLicenseState: Equatable {
+    case unlicensed
+    case licensed(LicenseInfo)
+    case renewalRequired(until: Date)
+    case invalid(LicenseInvalidReason)
+    case storageFailure
+}
+
+/// Small app-owned coordinator around the standalone IndieLicense verifier.
+/// Keep UI, pricing, checkout, and feature policy outside this type.
+@MainActor
+final class LicenseManager: ObservableObject {
+    @Published private(set) var state: AppLicenseState = .unlicensed
+
+    var isLicensed: Bool {
+        if case .licensed = state { return true }
+        return false
+    }
+
+    init() {
+        refresh()
+    }
+
+    /// Revalidates the stored key. Call after replacing bundled denylist data.
+    func refresh() {
+        do {
+            guard let key = try LicenseStore.shared.load(), !key.isEmpty else {
+                state = .unlicensed
+                return
+            }
+            apply(LicenseConfig.makeValidator().validate(key))
+        } catch {
+            state = .storageFailure
+        }
+    }
+
+    /// Validates and securely persists a pasted key.
+    @discardableResult
+    func activate(key: String) -> Bool {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else {
+            state = .invalid(.malformed("empty key"))
+            return false
+        }
+
+        let result = LicenseConfig.makeValidator().validate(key)
+        guard case .valid(let info) = result else {
+            apply(result)
+            return false
+        }
+
+        do {
+            try LicenseStore.shared.save(key: key)
+            state = .licensed(info)
+            return true
+        } catch {
+            state = .storageFailure
+            return false
+        }
+    }
+
+    private func apply(_ result: LicenseValidationResult) {
+        switch result {
+        case .valid(let info):
+            state = .licensed(info)
+        case .invalid(.updatesExpired(let until)):
+            state = .renewalRequired(until: until)
+        case .invalid(.storageFailure):
+            state = .storageFailure
+        case .invalid(let reason):
+            state = .invalid(reason)
+        }
+    }
+}

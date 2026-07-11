@@ -43,6 +43,7 @@ never in the repo working tree.
 
 ```sh
 swift build                        # debug build
+swift Tools/embed-templates.swift  # after changing Verifier/ or Templates/Swift/
 swift build -c release --product indielicense   # CLI at .build/release/indielicense
 swift test                         # library, CLI, adversarial, concurrency, vectors, file-sync
 node --test Tests/verify.test.mjs  # JS verifier plus adversarial regression tests
@@ -57,6 +58,14 @@ enforces this):
 
 ```sh
 cp Verifier/LicenseVerifier.swift Sources/IndieLicense/LicenseVerifier.swift
+```
+
+If you touched the verifier or any `Templates/Swift/` file, also regenerate
+`Sources/CLI/EmbeddedTemplates.swift`; a sync test enforces this so the
+standalone Homebrew binary always carries the canonical sources:
+
+```sh
+swift Tools/embed-templates.swift
 ```
 
 ## Published CLI distribution
@@ -86,6 +95,8 @@ script locally.
 | path | what it is |
 |---|---|
 | `Sources/CLI/` | the `indielicense` CLI (only code that touches private keys) |
+| `Templates/Swift/` | generalized app-owned Swift scaffolding templates |
+| `Tools/embed-templates.swift` | embeds verifier/templates in the standalone CLI binary |
 | `Verifier/LicenseVerifier.swift` | **canonical** single-file Swift verifier — the primary integration path |
 | `Sources/IndieLicense/LicenseVerifier.swift` | byte-identical copy = the SPM library |
 | `Verifier/verify.mjs` | dependency-free JS verifier (Electron/Tauri) |
@@ -113,10 +124,16 @@ script locally.
 
 ## Task: integrate verification into the user's Swift app
 
-1. Copy `Verifier/LicenseVerifier.swift` into their app target (preferred over
-   the SPM dependency — it's one auditable file). Alternatively add the
-   package: `.package(url: "https://github.com/tarasowski/indielicence", from: "1.0.0")`,
-   library `IndieLicense`.
+1. For a standard Swift app, prefer generating transparent app-owned source:
+   ```sh
+   indielicense integrate swift --product <id> --public-key <base64> \
+       --build-date YYYY-MM-DD --output <app>/License --ui none --denylist none
+   ```
+   Use `--ui swiftui` only when its neutral UI fits. Inspect the output, add its
+   `.swift` files to the app target, and follow its `LICENSE_INTEGRATION.md`.
+   The command never overwrites files and requires no runtime SDK. For a custom
+   integration, copy `Verifier/LicenseVerifier.swift`; alternatively add the
+   package library `IndieLicense`.
 2. Wire it up (replace the public key and product id):
 
 ```swift

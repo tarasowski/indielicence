@@ -61,19 +61,34 @@ The human must back up both generated files in encrypted storage. The agent may
 use the base64 public key printed by the CLI, but must never handle the contents
 of the private key or state file. Never rerun or work around a refused `init`.
 
-### 3. Add the verifier
+### 3. Generate the Swift plumbing or add the verifier manually
 
 Choose one supported path:
 
-- Swift/macOS: copy the canonical `Verifier/LicenseVerifier.swift` into the app
-  target. This is preferred because it is one auditable file using only Apple
-  system frameworks. The SPM library product `IndieLicense` is the alternative.
+- Standard Swift/macOS app: generate ordinary app-owned source files. This is
+  scaffolding, not an SDK or runtime dependency:
+  ```sh
+  indielicense integrate swift --product PRODUCT_ID \
+    --public-key BASE64_PUBLIC_KEY --build-date YYYY-MM-DD \
+    --output PATH/TO/APP/License --ui none --denylist none
+  ```
+  Select `--ui swiftui` only when a neutral price-free key-entry view is useful,
+  and `--denylist bundled` only when the signed denylist will be an app resource.
+  The command refuses to overwrite existing files. Inspect and adapt the output,
+  add its `.swift` files to the app target, and follow `LICENSE_INTEGRATION.md`.
+- Custom Swift/macOS integration: copy the canonical
+  `Verifier/LicenseVerifier.swift` into the app target. The SPM library product
+  `IndieLicense` remains an alternative.
 - Electron/Tauri/Node: copy `Verifier/verify.mjs`. It is dependency-free and
   uses `node:crypto`.
 
 Do not reimplement the wire format or cryptography. Do not weaken or reorder
 validation. Do not introduce a network request, server activation, telemetry,
 or analytics.
+
+Generated Swift types and UI are starting points owned by the target app. Keep
+product-specific feature policy, migrations, checkout, prices, copy, and
+localization in that app; never add them to IndieLicense's generalized templates.
 
 ### 4. Wire the complete app flow
 

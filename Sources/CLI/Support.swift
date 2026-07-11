@@ -95,7 +95,7 @@ private func writeAll(fd: Int32, data: Data, path: String) throws {
     }
 }
 
-private func secureExclusiveWrite(_ data: Data, to url: URL, mode: mode_t = 0o600) throws {
+func secureExclusiveWrite(_ data: Data, to url: URL, mode: mode_t = 0o600) throws {
     let fd = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode)
     guard fd >= 0 else { throw systemError("create", path: url.path) }
     var succeeded = false

@@ -1,0 +1,62 @@
+import SwiftUI
+
+/// Neutral, price-free key entry. Adapt the copy and styling to your app.
+struct LicenseActivationView: View {
+    @ObservedObject var license: LicenseManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var key = ""
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Activate License")
+                .font(.title2.weight(.semibold))
+
+            Text("Paste your license key to unlock licensed features.")
+                .foregroundStyle(.secondary)
+
+            TextField("License key", text: $key)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(activate)
+
+            if let message = errorMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Button("Activate", action: activate)
+                .buttonStyle(.borderedProminent)
+                .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Button("Not now") { dismiss() }
+                .buttonStyle(.plain)
+        }
+        .padding(28)
+        .frame(width: 380)
+    }
+
+    private var errorMessage: String? {
+        switch license.state {
+        case .unlicensed, .licensed:
+            return nil
+        case .renewalRequired(let until):
+            return "This license covers versions released through \(until.formatted(date: .abbreviated, time: .omitted))."
+        case .storageFailure:
+            return "The license could not be accessed securely. Please try again."
+        case .invalid(.expired(let on)):
+            return "This license expired on \(on.formatted(date: .abbreviated, time: .omitted))."
+        case .invalid(.wrongProduct):
+            return "This key is for a different product."
+        case .invalid(.revoked):
+            return "This license has been revoked."
+        case .invalid(.invalidConfiguration), .invalid(.badDenylist):
+            return "Licensing is not configured correctly in this build."
+        case .invalid:
+            return "This license key is not valid. Check it and try again."
+        }
+    }
+
+    private func activate() {
+        if license.activate(key: key) { dismiss() }
+    }
+}
