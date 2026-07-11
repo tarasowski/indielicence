@@ -22,6 +22,6 @@ class Indielicense < Formula
     assert_match "indielicense", shell_output("#{bin}/indielicense --help")
     chmod 0700, testpath
     system bin/"indielicense", "init", "--product", "brewtest", "--key-dir", testpath
-    assert_predicate testpath/"brewtest.private", :exist?
+    assert_path_exists testpath/"brewtest.private"
   end
 end
