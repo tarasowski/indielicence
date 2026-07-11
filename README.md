@@ -187,6 +187,19 @@ has will still accept the key — that's inherent to offline licensing and
 usually fine: refund abuse at indie scale is rare, and the denylist stops it
 from compounding.
 
+## Install the CLI
+
+The signed and Apple-notarized universal macOS binary is published through the
+[`tarasowski/tap`](https://github.com/tarasowski/homebrew-tap) Homebrew tap:
+
+```sh
+brew install tarasowski/tap/indielicense
+indielicense --version
+```
+
+Prebuilt archives and SHA-256 checksums are also available on the
+[GitHub Releases page](https://github.com/tarasowski/indielicence/releases).
+
 ## Building from source
 
 ```sh
@@ -196,9 +209,6 @@ node --test Tests/verify.test.mjs # JS verifier against the same vectors
 Examples/demo.sh                  # end-to-end walkthrough in a temp dir
 ```
 
-Or install via Homebrew once you've pushed a release (see
-[`Formula/indielicense.rb`](Formula/indielicense.rb) for a tap-ready formula).
-
 Maintainer releases are built, Developer-ID-signed, and Apple-notarized on the
 local Mac so the private signing key never leaves Keychain. After storing a
 `notarytool` profile named `indielicense-notary`, publish from a clean `main`:
@@ -206,7 +216,7 @@ local Mac so the private signing key never leaves Keychain. After storing a
 ```sh
 xcrun notarytool store-credentials "indielicense-notary" \
   --apple-id "YOUR_APPLE_ID" --team-id "4UPMHT6AFG"
-Tools/release.sh 1.0.0
+Tools/release.sh 1.0.2 # example: choose the next unused version
 ```
 
 The script runs all tests, builds the universal CLI, signs and notarizes it,
