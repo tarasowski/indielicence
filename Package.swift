@@ -11,7 +11,7 @@ let package = Package(
         .library(name: "IndieLicense", targets: ["IndieLicense"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.8.2"),
     ],
     targets: [
         // Verification-only library. Zero secrets, zero dependencies beyond

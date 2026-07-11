@@ -9,15 +9,29 @@ import XCTest
 
 /// In-memory activation store with LicenseStore's stamp-once semantics,
 /// so expiry tests can control "today" without touching the Keychain.
-final class MemoryActivationStore: LicenseActivationDateStore {
+final class MemoryActivationStore: LicenseStateStore {
     var today: Date
-    private(set) var stamped: [UInt32: Date] = [:]
+    private(set) var stamped: [String: Date] = [:]
+    private(set) var sequences: [String: UInt32] = [:]
     init(today: Date) { self.today = today }
-    func activatedAt(for keyID: UInt32) -> Date {
-        if let existing = stamped[keyID] { return existing }
-        stamped[keyID] = today
+    func activatedAt(for licenseIdentifier: String) throws -> Date {
+        if let existing = stamped[licenseIdentifier] { return existing }
+        stamped[licenseIdentifier] = today
         return today
     }
+    func highestDenylistSequence(for productIdentifier: String) throws -> UInt32? {
+        sequences[productIdentifier]
+    }
+    func recordDenylistSequence(_ sequence: UInt32, for productIdentifier: String) throws {
+        sequences[productIdentifier] = max(sequence, sequences[productIdentifier] ?? 0)
+    }
+}
+
+final class FailingStateStore: LicenseStateStore {
+    enum Failure: Error { case unavailable }
+    func activatedAt(for licenseIdentifier: String) throws -> Date { throw Failure.unavailable }
+    func highestDenylistSequence(for productIdentifier: String) throws -> UInt32? { throw Failure.unavailable }
+    func recordDenylistSequence(_ sequence: UInt32, for productIdentifier: String) throws { throw Failure.unavailable }
 }
 
 func day(_ iso: String) -> Date {
@@ -43,6 +57,7 @@ struct Vectors: Decodable {
     struct Denylist: Codable {
         let format: String
         let product: String
+        let sequence: UInt32
         let revoked: [DenylistEntry]
         let signature: String
     }
@@ -76,11 +91,11 @@ class FixedKeyTestCase: XCTestCase {
 
     func makeValidator(
         buildDate: Date = day("2026-07-11"), denylist: URL? = nil,
-        store: LicenseActivationDateStore = MemoryActivationStore(today: day("2026-07-11"))
+        store: LicenseStateStore = MemoryActivationStore(today: day("2026-07-11"))
     ) -> LicenseValidator {
         LicenseValidator(
             publicKey: publicKeyBase64, product: "pixelpro",
-            buildDate: buildDate, denylist: denylist, activationDates: store)
+            buildDate: buildDate, denylist: denylist, stateStore: store)
     }
 
     func mint(keyID: UInt32, product: String = "pixelpro", expires: UInt16? = nil, updates: UInt16? = nil) -> String {
@@ -93,6 +108,7 @@ class FixedKeyTestCase: XCTestCase {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("indielicense-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: tempDir.path)
     }
 
     override func tearDownWithError() throws {
@@ -239,12 +255,80 @@ final class ValidatorTests: FixedKeyTestCase {
         var forged = vectors.denylist
         forged = Vectors.Denylist(
             format: forged.format, product: forged.product,
+            sequence: forged.sequence,
             revoked: forged.revoked + [Vectors.DenylistEntry(key_id: 600, note: nil)],
             signature: forged.signature)
         let forgedURL = tempDir.appendingPathComponent("forged.denylist.json")
         try JSONEncoder().encode(forged).write(to: forgedURL)
         guard case .invalid(.badDenylist) = makeValidator(denylist: forgedURL).validate(notRevoked) else {
             return XCTFail("forged denylist must be rejected outright")
+        }
+    }
+
+    func testNonASCIICrockfordCharactersAreRejected() throws {
+        let original = vectors.cases.first(where: { $0.name == "lifetime_valid" })!.key
+        guard let position = original.firstIndex(of: "S") else {
+            return XCTFail("vector must contain S for the Unicode-malleability regression")
+        }
+        var altered = original
+        altered.replaceSubrange(position...position, with: "ſ")
+        guard case .invalid(.malformed) = makeValidator().validate(altered) else {
+            return XCTFail("non-ASCII characters must never case-fold into the Crockford alphabet")
+        }
+    }
+
+    func testOversizedKeyRejectedBeforeDecode() throws {
+        let oversized = "PIXELPRO-" + String(repeating: "0", count: 600)
+        guard case .invalid(.malformed) = makeValidator().validate(oversized) else {
+            return XCTFail("oversized keys must be rejected")
+        }
+    }
+
+    func testDeterministicMalformedCorpusNeverCrashes() throws {
+        var state: UInt64 = 0x4d595df4d0f33173
+        func next() -> UInt64 {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return state
+        }
+        let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ-!@#$%^&*()")
+        let validator = makeValidator()
+        for _ in 0..<2_000 {
+            let length = Int(next() % 512)
+            let body = String((0..<length).map { _ in alphabet[Int(next() % UInt64(alphabet.count))] })
+            _ = validator.validate("FUZZ-" + body)
+        }
+    }
+
+    func testStorageFailureFailsClosed() throws {
+        let trial = mint(keyID: 77, expires: 14)
+        let validator = makeValidator(store: FailingStateStore())
+        guard case .invalid(.storageFailure) = validator.validate(trial) else {
+            return XCTFail("activation persistence failure must fail closed")
+        }
+    }
+
+    func testActivationIdentityIncludesSignedPayload() throws {
+        let store = MemoryActivationStore(today: day("2026-07-11"))
+        let first = mint(keyID: 88, expires: 14)
+        let second = mint(keyID: 88, expires: 30)
+        _ = makeValidator(store: store).validate(first)
+        _ = makeValidator(store: store).validate(second)
+        XCTAssertEqual(store.stamped.count, 2, "same numeric id with different signed payloads must not share activation")
+    }
+
+    func testDenylistSequenceRollbackFailsClosed() throws {
+        let url = tempDir.appendingPathComponent("rollback.denylist.json")
+        let store = MemoryActivationStore(today: day("2026-07-11"))
+        let license = mint(keyID: 900)
+        let newer = DenylistFile(product: "pixelpro", sequence: 2, revoked: [])
+        try newer.write(to: url, privateKey: privateKey)
+        guard case .valid = makeValidator(denylist: url, store: store).validate(license) else {
+            return XCTFail("newer denylist should validate")
+        }
+        let older = DenylistFile(product: "pixelpro", sequence: 1, revoked: [])
+        try older.write(to: url, privateKey: privateKey)
+        guard case .invalid(.badDenylist) = makeValidator(denylist: url, store: store).validate(license) else {
+            return XCTFail("older signed denylist must be rejected after a newer sequence was seen")
         }
     }
 }
@@ -256,11 +340,13 @@ final class CLITests: FixedKeyTestCase {
         let url = tempDir.appendingPathComponent("\(product).private")
         try (privateKey.rawRepresentation.base64EncodedString() + "\n")
             .write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try KeyDirectory(path: tempDir.path).initializeState(product: product)
     }
 
     func runGenerate(_ extra: [String], out: String = "keys.csv") throws {
         let arguments = ["--key-dir", tempDir.path, "--out", tempDir.appendingPathComponent(out).path] + extra
-        var command = try Generate.parse(arguments)
+        let command = try Generate.parse(arguments)
         try command.run()
     }
 
@@ -279,7 +365,7 @@ final class CLITests: FixedKeyTestCase {
         XCTAssertEqual(lines[0], "key_id,license_key,issued_at,mode,expires_duration_days,updates_duration_days")
         XCTAssertEqual(lines.count, 5, "header + 4 keys")
 
-        let today = isoDate(unixDay: Int(todayUnixDay()))
+        let today = isoDate(unixDay: Int(try todayUnixDay()))
         let fields = lines.dropFirst().map { $0.split(separator: ",", omittingEmptySubsequences: false).map(String.init) }
         XCTAssertEqual(fields.map { $0[0] }, ["1", "2", "3", "4"], "sequential ids across batches")
         XCTAssertEqual(fields.map { $0[3] }, ["trial", "trial", "updates", "lifetime"])
@@ -327,14 +413,31 @@ final class CLITests: FixedKeyTestCase {
     }
 
     func testInitRefusesToOverwrite() throws {
-        var initCommand = try Init.parse(["--product", "demoapp", "--key-dir", tempDir.path])
+        let initCommand = try Init.parse(["--product", "demoapp", "--key-dir", tempDir.path])
         try initCommand.run()
         XCTAssertThrowsError(try initCommand.run(), "second init must refuse to overwrite the private key")
     }
 
+    func testConcurrentInitCreatesExactlyOneKeypair() throws {
+        let executable = repoRoot.appendingPathComponent(".build/debug/indielicense")
+        let processes: [Process] = try (0..<8).map { _ in
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = [
+                "init", "--product", "initrace", "--key-dir", tempDir.path,
+            ]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            return process
+        }
+        processes.forEach { $0.waitUntilExit() }
+        XCTAssertEqual(processes.filter { $0.terminationStatus == 0 }.count, 1)
+    }
+
     func testRevokeSignsAndVerifierRejects() throws {
         try writeFixedPrivateKey()
-        var revoke = try Revoke.parse(["3", "--note", "refunded", "--key-dir", tempDir.path])
+        let revoke = try Revoke.parse(["3", "--note", "refunded", "--key-dir", tempDir.path])
         try revoke.run()
 
         let validator = makeValidator(denylist: tempDir.appendingPathComponent("pixelpro.denylist.json"))
@@ -343,6 +446,56 @@ final class CLITests: FixedKeyTestCase {
             return XCTFail("other keys unaffected by the denylist")
         }
     }
+
+    func testConcurrentGeneratorsReserveUniqueIDs() throws {
+        try writeFixedPrivateKey(product: "racecheck")
+        let executable = repoRoot.appendingPathComponent(".build/debug/indielicense")
+        let processes: [Process] = try (0..<12).map { index in
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = [
+                "generate", "--count", "1", "--mode", "lifetime",
+                "--product", "racecheck", "--key-dir", tempDir.path,
+                "--out", tempDir.appendingPathComponent("race-\(index).csv").path,
+            ]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            return process
+        }
+        processes.forEach { $0.waitUntilExit() }
+        XCTAssertTrue(processes.allSatisfy { $0.terminationStatus == 0 })
+        let ids = try (0..<12).map { index -> Int in
+            let lines = try csvLines("race-\(index).csv")
+            return Int(lines[1].split(separator: ",")[0])!
+        }
+        XCTAssertEqual(ids.sorted(), Array(1...12))
+    }
+
+    func testConcurrentRevocationsDoNotLoseEntries() throws {
+        try writeFixedPrivateKey(product: "racecheck")
+        let executable = repoRoot.appendingPathComponent(".build/debug/indielicense")
+        let processes: [Process] = try (1...12).map { keyID in
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = [
+                "revoke", String(keyID), "--note", "concurrent",
+                "--product", "racecheck", "--key-dir", tempDir.path,
+            ]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            return process
+        }
+        processes.forEach { $0.waitUntilExit() }
+        XCTAssertTrue(processes.allSatisfy { $0.terminationStatus == 0 })
+        let loaded = try DenylistFile.load(
+            from: tempDir.appendingPathComponent("racecheck.denylist.json"),
+            product: "racecheck", publicKey: privateKey.publicKey)
+        XCTAssertEqual(loaded.sequence, 12)
+        XCTAssertEqual(loaded.revoked.map(\.keyID).sorted(), (1...12).map(UInt32.init))
+    }
+
 }
 
 // MARK: - The single-file verifier is the library, byte for byte

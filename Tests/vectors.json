@@ -55,6 +55,21 @@
       "key": "PIXELPRO-THIS0-IS0N0-TAKEY"
     },
     {
+      "name": "oversized_product_signed",
+      "expect": "malformed",
+      "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-050P2-RB1C5-GP2RB-1C5GP-2RB1C-5GP2R-B1C5G-P2RB1-C5GP2-RB1C5-GP2RB-1C5GP-2RB1C-5GP2R-B1C5G-P2RB1-C5GP2-RB1C5-GP2RB-1C5GP-2RB1C-5GG00-00118-AA01B-62ARW-H1M7N-7VET4-CZVP3-E2NG2-P3MZ1-M29HX-28M53-C5583-TJA9T-KP24H-YYGYY-M38W6-AEFAK-3GD1H-06171-EE4AW-NEZAR-129V3-Z4940-E"
+    },
+    {
+      "name": "unknown_flags_signed",
+      "expect": "malformed",
+      "key": "PIXELPRO-04470-TBRCN-P70WK-F0000-02AGM-M2F7H-F6MEF-B5DPD-ESVQS-H0A0H-F9S8J-FKSRP-7AC8F-PNYEB-3VS3X-QGGZW-XVBXE-77694-PHVTK-ENXBR-PEMTJ-BBSJ3-Z0J2A-Z9D6Q-2VH32-1760W"
+    },
+    {
+      "name": "trailing_payload_byte_signed",
+      "expect": "malformed",
+      "key": "PIXELPRO-04470-TBRCN-P70WK-F0000-02JGM-M001J-RR5W9-YF4RM-AAEPR-798WJ-VRYC8-PC0KV-8XTTH-4FFSX-W22ZH-DF3VK-6BFMH-6DGCF-A5JJE-GBF3V-47QGF-6VFQ7-TNXM6-YEHTX-K3MQV-K9TMM-5G"
+    },
+    {
       "name": "unsupported_version",
       "expect": "unsupported_version",
       "key": "PIXELPRO-14470-TBRCN-P70WK-F0000-01TGM-M0BRD-GSQFB-H4FMN-CNFCC-AZ7R8-K9RZ7-W7JWG-DYVHC-3QS14-5GE8K-PAA56-8KPQ7-HT28P-558B5-1ZA4X-RJTQ9-VP4ZA-6CGHK-5SVBZ-K66G3-CSV1G"
@@ -63,12 +78,13 @@
   "denylist": {
     "format": "indielicense-denylist-v1",
     "product": "pixelpro",
+    "sequence": 1,
     "revoked": [
       {
         "key_id": 6,
         "note": "test vector: refunded"
       }
     ],
-    "signature": "fkpFQgjYJGL/p6KRRPdkYRV1ZiJLHLhY38HzhKBFqMINEJPkyQneQg6b1DoQ+XwvC6Jc3hphpWzKrunoN8xFCA=="
+    "signature": "tL5Jh3ZA/iNLdqUbgu3bSYex9tXu210FIKMtIbUjXWEVo/jZZVRSCwnTbckznUdhnl9xoyeUvxw9XWuOOQn8AQ=="
   }
 }

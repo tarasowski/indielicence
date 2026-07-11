@@ -6,13 +6,26 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
     name: Universal binary → GitHub Release
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag and test source
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          grep -F "version: \"$VERSION\"" Sources/CLI/Commands.swift
+          swift test
+          node --test Tests/verify.test.mjs
+          node Tools/make-vectors.mjs > /tmp/vectors.json
+          diff Tests/vectors.json /tmp/vectors.json
 
       - name: Build universal binary (arm64 + x86_64)
         run: |
@@ -22,27 +35,76 @@ jobs:
           mkdir -p dist
           cp "$BIN" dist/indielicense
 
-      # Ad-hoc signing keeps Gatekeeper happy for local use; maintainers with a
-      # Developer ID can replace this step with a real identity + notarization:
-      #   codesign --sign "Developer ID Application: …" --options runtime dist/indielicense
-      #   xcrun notarytool submit … --wait
-      - name: Sign (ad-hoc; see comment for Developer ID + notarization)
-        run: codesign --force --sign - dist/indielicense
+      - name: Import Developer ID certificate and sign
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$CERTIFICATE_P12_BASE64"
+          test -n "$CERTIFICATE_PASSWORD"
+          test -n "$KEYCHAIN_PASSWORD"
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk '/Developer ID Application/ {print $2; exit}')
+          test -n "$IDENTITY"
+          codesign --force --sign "$IDENTITY" --options runtime --timestamp dist/indielicense
+          codesign --verify --strict --verbose=2 dist/indielicense
+
+      - name: Notarize signed binary
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          test -n "$APPLE_ID"
+          test -n "$APPLE_TEAM_ID"
+          test -n "$APPLE_APP_PASSWORD"
+          ditto -c -k --keepParent dist/indielicense "$RUNNER_TEMP/indielicense-notarization.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/indielicense-notarization.zip" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait
 
       - name: Smoke test
         run: dist/indielicense --version
 
       - name: Package
         run: |
+          swift package show-dependencies --format json > dist/dependencies.json
           cd dist
-          tar czf "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz" indielicense
+          tar czf "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz" \
+            indielicense dependencies.json
           shasum -a 256 "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz" > \
             "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz.sha256"
+          SHA256=$(awk '{print $1}' "indielicense-${GITHUB_REF_NAME}-macos-universal.tar.gz.sha256")
+          sed -e "s/v1.0.0/${GITHUB_REF_NAME}/g" \
+              -e "s/REPLACE_WITH_SHA256_FROM_RELEASE_ASSET/$SHA256/" \
+              ../Formula/indielicense.rb > indielicense.rb
+
+      - name: Attest release archive provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: dist/indielicense-*.tar.gz
 
       - name: Attach to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             dist/indielicense-*.tar.gz
             dist/indielicense-*.tar.gz.sha256
+            dist/indielicense.rb
           generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Remove ephemeral signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/release-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/indielicense-notarization.zip"
