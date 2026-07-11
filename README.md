@@ -78,10 +78,32 @@ dependency-free `node:crypto` verifier that passes the same test vectors.
 | **updates** | `--mode updates --updates-duration 365d` | Unlocks forever, but only versions **released** within 365 days of their activation are covered — after that they keep their current version or buy a renewal key. The Sketch/JetBrains-fallback model; the default choice for "buy once, 12 months of updates included". |
 | **trial** | `--mode trial --expires 14d` | The app stops working entirely 14 days after activation. |
 
-Durations always count from the **customer's first activation** — keys can
-sit unsold in your CSV for years without losing a day of anyone's window.
+### When does the clock start? At activation — never at generation
+
+A common worry with pre-generated keys: "if I mint 500 trial keys today, do
+their 14 days start ticking today?" **No.** A key contains no dates at all,
+only a duration. The timeline for a `--expires 14d` trial key:
+
+```
+you mint the key          customer buys it        customer pastes it        day 14 after
+(--mode trial              (key sat unsold         into the app             activation
+ --expires 14d)             for 6 months —         ──────────────►          ──────────►
+      │                     costs them nothing)    first successful         trial ends
+      │                            │               validation stamps        HERE, and
+      ▼                            ▼               activatedAt = today      only here
+  key stores just "14 days" ─────────────────────► countdown starts NOW
+```
+
+- The app stamps `activatedAt` in the Keychain on the **first successful
+  validation** and never resets it — relaunching or reinstalling doesn't
+  restart a trial (Keychain survives reinstalls).
+- `--mode updates` works the same way: the 365-day update window counts from
+  each customer's own activation, not from when you generated the batch.
+- The `issued_at` column in the CSV is bookkeeping only — it is never used in
+  any validation math.
+
 The updates check compares against your app's **build date**, not the wall
-clock, so an installed version never stops working.
+clock, so a version a customer already has installed never stops working.
 
 ## CLI reference
 
