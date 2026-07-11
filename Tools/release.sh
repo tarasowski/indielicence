@@ -64,9 +64,22 @@ codesign --verify --strict --verbose=2 "$WORK/indielicense"
 "$WORK/indielicense" --version
 
 ditto -c -k --keepParent "$WORK/indielicense" "$WORK/notarization.zip"
+NOTARY_RESULT="$WORK/notary-result.json"
 xcrun notarytool submit "$WORK/notarization.zip" \
-  --keychain-profile "$NOTARY_PROFILE" --wait
-spctl --assess --type execute --verbose=2 "$WORK/indielicense"
+  --keychain-profile "$NOTARY_PROFILE" --wait --output-format json > "$NOTARY_RESULT"
+cat "$NOTARY_RESULT"
+NOTARY_STATUS=$(/usr/bin/plutil -extract status raw -o - "$NOTARY_RESULT")
+NOTARY_ID=$(/usr/bin/plutil -extract id raw -o - "$NOTARY_RESULT")
+[[ "$NOTARY_STATUS" == Accepted ]] || {
+  echo "Apple notarization failed with status: $NOTARY_STATUS" >&2; exit 1;
+}
+xcrun notarytool log --keychain-profile "$NOTARY_PROFILE" \
+  "$NOTARY_ID" "$WORK/notary-log.json"
+
+# Apple creates an online Gatekeeper ticket for the nested executable, but
+# standalone Mach-O files cannot carry a stapled ticket. The accepted notary
+# result plus the preserved Developer ID signature is the authoritative check.
+codesign --verify --strict --verbose=2 "$WORK/indielicense"
 
 mkdir -p dist
 ARCHIVE="dist/indielicense-$TAG-macos-universal.tar.gz"
