@@ -23,22 +23,16 @@ either file manually.
 
 ## Release requirements
 
-Release tags must be protected and reviewed. The release workflow requires:
+Releases are produced only from a clean local `main` that exactly matches
+`origin/main`, using `Tools/release.sh`. The maintainer's Developer ID private
+key remains in the local macOS Keychain and is never exported to GitHub.
 
-- `MACOS_CERTIFICATE_P12`
-- `MACOS_CERTIFICATE_PASSWORD`
-- `MACOS_KEYCHAIN_PASSWORD`
-- `APPLE_ID`
-- `APPLE_TEAM_ID`
-- `APPLE_APP_PASSWORD`
+The release script runs the complete test suite, verifies deterministic
+vectors, builds a universal binary, signs it with Developer ID, submits it to
+Apple notarization using a local `notarytool` Keychain profile, creates a
+SHA-256 checksum, publishes the GitHub release, and updates the protected
+Homebrew tap through a pull request. GitHub Actions performs CI only.
 
-It performs the complete test suite, verifies deterministic vectors, signs
-with Developer ID, submits the binary for Apple notarization, creates a SHA-256
-checksum, and publishes GitHub build provenance. GitHub Actions are pinned to
-full commit hashes. Repository administrators must enable protected release
-tags and immutable releases in GitHub settings; those controls cannot be
-declared from repository source.
-
-Consumers should verify the published checksum and provenance before running
-the CLI. App developers should prefer the single-file verifier, review it, and
-embed an immutable UTC release day in the signed application binary.
+Consumers should verify the published checksum and Apple signature before
+running the CLI. App developers should prefer the single-file verifier, review
+it, and embed an immutable UTC release day in the signed application binary.
