@@ -7,10 +7,10 @@ MakersDrop / Gumroad / Lemon Squeezy / Paddle / Stripe, and validate them in
 your app fully offline — no server, no service, no account, no telemetry, no network calls.
 If this repo disappears tomorrow, your keys and your app keep working.
 
-> **Using a coding agent** (Claude Code, Codex, Cursor)? Point it at this
-> repo — [`AGENTS.md`](AGENTS.md) tells it how to set up licensing, integrate
-> the verifier into your app, and which operations it must never perform
-> (touching private keys, revoking, anything destructive).
+> **Using a coding agent** (Claude Code, Codex, Cursor)? Give it this repository
+> and the copy-paste prompt in [`AI_INTEGRATION.md`](AI_INTEGRATION.md). That
+> playbook provides the complete app-integration workflow. [`AGENTS.md`](AGENTS.md)
+> contains the mandatory security and repository rules.
 
 ## The 5-step workflow
 
