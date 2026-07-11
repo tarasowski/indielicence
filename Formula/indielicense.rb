@@ -1,9 +1,7 @@
 # Homebrew formula for IndieLicense.
 #
-# To publish: create a tap repo (github.com/tarasowski/homebrew-tap), copy this
-# file into its Formula/ directory, and fill in the placeholders from the
-# .sha256 file the release workflow attaches to each GitHub release. Users
-# then install with:
+# `Tools/release.sh` fills the version/hash placeholders and publishes the
+# result to github.com/tarasowski/homebrew-tap. Users then install with:
 #
 #   brew install tarasowski/tap/indielicense
 #

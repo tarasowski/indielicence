@@ -199,6 +199,20 @@ Examples/demo.sh                  # end-to-end walkthrough in a temp dir
 Or install via Homebrew once you've pushed a release (see
 [`Formula/indielicense.rb`](Formula/indielicense.rb) for a tap-ready formula).
 
+Maintainer releases are built, Developer-ID-signed, and Apple-notarized on the
+local Mac so the private signing key never leaves Keychain. After storing a
+`notarytool` profile named `indielicense-notary`, publish from a clean `main`:
+
+```sh
+xcrun notarytool store-credentials "indielicense-notary" \
+  --apple-id "YOUR_APPLE_ID" --team-id "4UPMHT6AFG"
+Tools/release.sh 1.0.0
+```
+
+The script runs all tests, builds the universal CLI, signs and notarizes it,
+creates the GitHub release and checksum, and updates the protected Homebrew tap
+through a pull request. GitHub Actions is CI-only.
+
 ## Security model, honestly
 
 Ed25519 signatures mean nobody can mint keys without your private key —
