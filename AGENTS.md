@@ -57,6 +57,28 @@ enforces this):
 cp Verifier/LicenseVerifier.swift Sources/IndieLicense/LicenseVerifier.swift
 ```
 
+## Published CLI distribution
+
+A public, signed, and Apple-notarized universal macOS binary already exists.
+Users install the current release from the protected Homebrew tap:
+
+```sh
+brew install tarasowski/tap/indielicense
+```
+
+Release archives and SHA-256 files are published at
+`github.com/tarasowski/indielicence/releases`; the formula lives in
+`github.com/tarasowski/homebrew-tap`. `Tools/release.sh <version>` is the only
+maintainer release path: it runs tests, builds arm64 + x86_64, signs with the
+local Developer ID key, submits to Apple notarization, publishes the GitHub
+release, and updates the tap through a pull request. GitHub Actions is CI-only.
+
+Apple credentials must never be added to the repository, `.env` files, or
+GitHub secrets. The release script uses the `indielicense-notary` profile in
+the maintainer's local macOS Keychain. Before a new release, bump the CLI
+version in `Sources/CLI/Commands.swift`, merge to a clean `main`, and run the
+script locally.
+
 ## Repo map
 
 | path | what it is |
