@@ -92,7 +92,7 @@ FORMULA="dist/indielicense.rb"
 tar -C "$WORK" -czf "$ARCHIVE" indielicense dependencies.json
 shasum -a 256 "$ARCHIVE" > "$CHECKSUM"
 SHA256=$(awk '{print $1}' "$CHECKSUM")
-sed -e "s/v1.0.0/$TAG/g" \
+sed -e "s/REPLACE_WITH_TAG/$TAG/g" \
     -e "s/REPLACE_WITH_SHA256_FROM_RELEASE_ASSET/$SHA256/" \
     Formula/indielicense.rb > "$FORMULA"
 
