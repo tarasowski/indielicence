@@ -9,8 +9,10 @@ If this repo disappears tomorrow, your keys and your app keep working.
 
 > **Using a coding agent** (Claude Code, Codex, Cursor)? Give it this repository
 > and the copy-paste prompt in [`AI_INTEGRATION.md`](AI_INTEGRATION.md). That
-> playbook provides the complete app-integration workflow. [`AGENTS.md`](AGENTS.md)
-> contains the mandatory security and repository rules.
+> playbook provides the complete app-integration workflow, including a
+> licensing interview the agent runs with you (key mode, update window,
+> keyless trial days, purchase URL, …) so nothing is guessed on your behalf.
+> [`AGENTS.md`](AGENTS.md) contains the mandatory security and repository rules.
 
 ## The 5-step workflow
 
@@ -40,7 +42,8 @@ If this repo disappears tomorrow, your keys and your app keep working.
 ## Fast Swift integration — generated source, not an SDK
 
 Generate the standalone verifier, public configuration, Keychain-backed
-manager, optional neutral SwiftUI key-entry view, and a short handoff guide:
+manager, optional neutral SwiftUI key-entry view + status badge, and a short
+handoff guide:
 
 ```sh
 indielicense integrate swift \
@@ -49,7 +52,9 @@ indielicense integrate swift \
   --build-date 2026-07-11 \
   --output ./MyApp/License \
   --ui swiftui \
-  --denylist bundled
+  --denylist bundled \
+  --trial 7d \
+  --purchase-url https://your.store/pixelpro
 ```
 
 The generated `.swift` files belong to the app. There is no runtime SDK,
@@ -58,19 +63,27 @@ and only the public key is embedded — private key material and key-id state
 remain in the secure key directory.
 
 Use `--ui none` when the app already has key-entry UI. Use `--denylist none`
-when revocation is not being bundled yet. An agent or CI environment that has
-only the safe public key can use `--public-key BASE64 --product pixelpro`
-instead of `--key-dir`.
+when revocation is not being bundled yet. Use `--trial 7d` for a built-in
+keyless trial and `--purchase-url` for a "Buy a license" button (both
+optional; see below). An agent or CI environment that has only the safe
+public key can use `--public-key BASE64 --product pixelpro` instead of
+`--key-dir`.
 
 The output contains:
 
 - `LicenseVerifier.swift` — the canonical standalone verifier;
-- `LicenseConfig.swift` — public key, product, release build date, denylist;
-- `LicenseManager.swift` — launch validation, secure persistence, app state;
-- optional `LicenseActivationView.swift` — neutral and price-free;
+- `LicenseConfig.swift` — public key, product, release build date, denylist,
+  optional keyless trial length, optional purchase URL;
+- `LicenseManager.swift` — launch validation, secure persistence, app state,
+  keyless-trial tracking;
+- optional `LicenseActivationView.swift` — neutral key entry with an optional
+  "Buy a license" link;
+- optional `LicenseBadgeView.swift` — drop-in trial/unlock/renew status badge
+  that opens the activation sheet;
 - `LICENSE_INTEGRATION.md` — wiring and test checklist.
 
-`LicenseManager` exposes `isLicensed` plus explicit unlicensed, renewal,
+`LicenseManager` exposes `isLicensed`, `hasFullAccess` (licensed **or** in
+keyless trial), and explicit unlicensed, trial, trial-expired, renewal,
 invalid, and storage-failure states. The app still owns feature policy,
 checkout, pricing, UI copy, and localization.
 
@@ -170,6 +183,47 @@ you mint the key          customer buys it        customer pastes it        day 
 The updates check compares against your app's **build date**, not the wall
 clock, so a version a customer already has installed never stops working.
 
+## Keyless trial — try before any key exists
+
+Trial *keys* are for granting a specific person time (press, beta testers,
+"extend my trial" support). For the everyday "download and try for 7 days"
+flow you don't want keys at all — nobody should have to request one before
+deciding they like your app. That's the **keyless trial**, an opt-in feature
+of the generated Swift plumbing:
+
+```sh
+indielicense integrate swift --product <id> --build-date YYYY-MM-DD \
+  --output App/License --trial 7d
+```
+
+With `--trial 7d`, an app with no stored license key stamps the trial start
+day once in the Keychain on first launch (the same stamp-once anchoring used
+for `activatedAt`) and reports `.trial(daysRemaining:expiresOn:)`, then
+`.trialExpired(on:)` after the window — same inclusive day math as trial keys.
+Activating a purchased key ends the trial. Gate paid features with
+`license.hasFullAccess` (licensed **or** in trial) instead of
+`license.isLicensed`.
+
+This is purely app-side convenience — no wire-format change, no signature,
+nothing minted. Like the rest of the trial machinery it is a conversion tool,
+not a security boundary.
+
+### The drop-in badge
+
+With `--ui swiftui` the scaffold also includes `LicenseBadgeView`, a
+ready-made status badge for a toolbar or status area:
+
+```swift
+.toolbar { LicenseBadgeView(license: license) }
+```
+
+It shows "7 days left in trial" (turning urgent in the final 3 days), "Trial
+ended", "Unlock", "Renew license", or a failure state — and disappears once
+the app is licensed. Clicking it opens the key-entry sheet, which includes a
+"Buy a license" button when you pass `--purchase-url https://…` (your
+MakersDrop/Gumroad/Paddle/Lemon Squeezy product page). The link is only ever
+opened in the customer's browser; the app itself still makes no network calls.
+
 ## CLI reference
 
 ```
@@ -183,7 +237,8 @@ indielicense verify <key>                   full validation, exit 0/1
 indielicense inspect <key>                  decode a key, no key material needed
 indielicense integrate swift --product <id> --build-date YYYY-MM-DD
                      --output <app-source-directory> [--ui none|swiftui]
-                     [--denylist none|bundled] [--public-key <base64>]
+                     [--denylist none|bundled] [--trial 7d]
+                     [--purchase-url <https-link>] [--public-key <base64>]
                                             generate app-owned Swift plumbing
 indielicense revoke <key_id> [--note "refunded"] --key-dir <secure-directory>
                                             add to the signed denylist

@@ -96,6 +96,11 @@ are derived labels, fully determined by field presence:
 | absent | present | **updates** — unlocks forever; only versions released inside the window are covered |
 | present | absent or present | **trial** — the app stops working after the window |
 
+> **Out of scope:** the *keyless* trial offered by the generated app
+> scaffolding (`integrate swift --trial Nd`) involves no license key and has
+> no wire representation. It is app-side state only (a stamp-once start day
+> in the app's secure storage) and is normatively irrelevant to this spec.
+
 ## Activation anchoring
 
 The verifier stores a per-license **activatedAt** date locally (the Swift

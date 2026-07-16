@@ -50,6 +50,18 @@ struct Integrate: ParsableCommand {
     @Option(help: "none or bundled. Bundled expects <product>.denylist.json in the app target.")
     var denylist: IntegrationDenylist = .none
 
+    @Option(name: .customLong("trial"), help: """
+    Optional keyless trial length like '7d'. The trial starts on the customer's \
+    first launch and needs no license key; omit for no built-in trial.
+    """)
+    var trial: String?
+
+    @Option(name: .customLong("purchase-url"), help: """
+    Optional https link where customers buy a license key. Shown as a 'Buy a \
+    license' button in the generated UI; only ever opened in the browser.
+    """)
+    var purchaseURL: String?
+
     @OptionGroup var keyDirOption: KeyDirOption
 
     func run() throws {
@@ -70,6 +82,8 @@ struct Integrate: ParsableCommand {
         }
 
         let buildDay = try parseBuildDay(buildDate)
+        let trialDays = try trial.map { try parseDurationDays($0, flag: "--trial") }
+        let purchase = try purchaseURL.map(validatePurchaseURL)
         let outputURL = URL(
             fileURLWithPath: (output as NSString).expandingTildeInPath,
             isDirectory: true).standardizedFileURL
@@ -83,11 +97,14 @@ struct Integrate: ParsableCommand {
                     "PRODUCT": resolvedProduct,
                     "BUILD_DAY": String(buildDay),
                     "DENYLIST_URL": denylistExpression(product: resolvedProduct),
+                    "TRIAL_DAYS": trialDays.map(String.init) ?? "nil",
+                    "PURCHASE_URL": purchase.map { "URL(string: \"\($0)\")" } ?? "nil",
                 ])),
             ("LicenseManager.swift", EmbeddedTemplates.licenseManager),
         ]
         if ui == .swiftui {
             files.append(("LicenseActivationView.swift", EmbeddedTemplates.activationView))
+            files.append(("LicenseBadgeView.swift", EmbeddedTemplates.badgeView))
         }
         files.append(("LICENSE_INTEGRATION.md", try render(
             EmbeddedTemplates.integrationGuide,
@@ -97,6 +114,10 @@ struct Integrate: ParsableCommand {
                 "DENYLIST_DESCRIPTION": denylist == .bundled
                     ? "bundled signed `\(resolvedProduct).denylist.json`"
                     : "disabled",
+                "TRIAL_DESCRIPTION": trialDays.map {
+                    "\($0) day\($0 == 1 ? "" : "s"), starts on first launch"
+                } ?? "disabled",
+                "PURCHASE_DESCRIPTION": purchase.map { "`\($0)`" } ?? "not configured",
                 "UI_DESCRIPTION": ui == .swiftui ? "included" : "not generated",
             ])))
 
@@ -104,6 +125,10 @@ struct Integrate: ParsableCommand {
 
         print("Generated Swift licensing plumbing for '\(resolvedProduct)' in \(outputURL.path)")
         print("Add the .swift files to the app target, then follow LICENSE_INTEGRATION.md.")
+        if ui == .swiftui && purchase == nil {
+            print("Tip: pass --purchase-url <https-link> to show a 'Buy a license' button,")
+            print("or set LicenseConfig.purchaseURL later in the generated code.")
+        }
         print("Only the public key was embedded; no private key or key-id state was copied.")
     }
 
@@ -115,6 +140,18 @@ struct Integrate: ParsableCommand {
             return "Bundle.main.url(forResource: \"\(product).denylist\", withExtension: \"json\")"
         }
     }
+}
+
+private func validatePurchaseURL(_ value: String) throws -> String {
+    // The value is interpolated into a generated Swift string literal, so the
+    // character set is restricted to printable ASCII without quotes/backslashes.
+    let allowed = value.utf8.allSatisfy { (0x21...0x7e).contains($0) && $0 != 0x22 && $0 != 0x5c }
+    guard allowed, value.utf8.count <= 2048,
+          let url = URL(string: value), url.absoluteString == value,
+          url.scheme == "https", let host = url.host, !host.isEmpty else {
+        throw CLIError.message("--purchase-url must be a plain absolute https URL")
+    }
+    return value
 }
 
 private func validatePublicKey(_ value: String) throws {

@@ -13,6 +13,15 @@ enum LicenseConfig {
 
     static let denylistURL: URL? = {{DENYLIST_URL}}
 
+    /// Where customers buy a license key, or nil to hide purchase links in the
+    /// generated UI. Opened in the default browser; never fetched by the app.
+    static let purchaseURL: URL? = {{PURCHASE_URL}}
+
+    /// Keyless trial length in days, or nil when the app has no built-in trial.
+    /// The trial starts on the customer's first launch and the start day is
+    /// anchored once in the Keychain; no license key is involved.
+    static let trialDays: Int? = {{TRIAL_DAYS}}
+
     static func makeValidator() -> LicenseValidator {
         LicenseValidator(
             publicKey: publicKey,

@@ -9,14 +9,23 @@ Generated configuration:
 - Release build date: `{{BUILD_DATE}}` UTC
 - Key persistence: macOS Keychain
 - Denylist: {{DENYLIST_DESCRIPTION}}
+- Keyless trial: {{TRIAL_DESCRIPTION}}
+- Purchase link: {{PURCHASE_DESCRIPTION}}
 - SwiftUI activation view: {{UI_DESCRIPTION}}
 
 ## Wire it into the app
 
 1. Add every generated `.swift` file to the application target.
 2. Create one long-lived `LicenseManager` at app startup.
-3. Gate paid behavior with `license.isLicensed`.
+3. Gate paid behavior with `license.hasFullAccess` (licensed, or inside the
+   keyless trial when one is configured). Use `license.isLicensed` where a
+   purchased key must be required regardless of trial state.
 4. Present your own key-entry UI, or `LicenseActivationView` when generated.
+   With the SwiftUI files, drop `LicenseBadgeView(license: license)` into a
+   toolbar or status area: it shows trial days remaining, "Trial ended",
+   "Unlock", renewal, and failure states, opens the activation sheet on click,
+   and disappears entirely once the app is licensed. The sheet shows a "Buy a
+   license" button when `LicenseConfig.purchaseURL` is set.
 5. Keep checkout, prices, feature policy, copy, and localization in the app.
 6. Update `LicenseConfig.buildDate` to the immutable UTC release day before
    every release. Never calculate it from `Date()` or file metadata.
@@ -25,11 +34,20 @@ Generated configuration:
 closed on invalid configuration or inaccessible storage. `renewalRequired`
 means the key still covers eligible older releases but not this newer build.
 
+When `LicenseConfig.trialDays` is set, a customer with no stored key gets a
+keyless trial: the start day is stamped once in the Keychain on first launch,
+the window is inclusive of its final day (same day math as trial keys), and
+after it ends the state becomes `trialExpired`. Activating a real key ends the
+trial. The trial is a convenience, not a security boundary — a determined user
+can reset it, just as they could request another trial key.
+
 ## Test before shipping
 
 - Valid key activates, persists, and remains active after relaunch.
 - Malformed, tampered, and wrong-product keys stay locked.
 - Trial expiry or update-window boundaries behave correctly for the key mode.
+- With a keyless trial: full access during the window, `trialExpired` after,
+  and the trial does not restart on relaunch.
 - Storage/configuration failures fail closed.
 - A bundled signed denylist rejects a revoked key, when denylists are enabled.
 - Every paid feature checks the same license state.

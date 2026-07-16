@@ -1,0 +1,55 @@
+import SwiftUI
+
+/// Drop-in licensing badge. Place it in a toolbar, status area, or settings
+/// screen; it summarizes the current license state and opens the activation
+/// sheet when clicked. It renders nothing while the app is fully licensed.
+struct LicenseBadgeView: View {
+    @ObservedObject var license: LicenseManager
+    @State private var showingActivation = false
+
+    var body: some View {
+        if let badge {
+            Button {
+                showingActivation = true
+            } label: {
+                Text(badge.text)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        badge.urgent
+                            ? AnyShapeStyle(.orange.opacity(0.2))
+                            : AnyShapeStyle(.quaternary),
+                        in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Manage your license")
+            .sheet(isPresented: $showingActivation) {
+                LicenseActivationView(license: license)
+            }
+        }
+    }
+
+    private var badge: (text: String, urgent: Bool)? {
+        switch license.state {
+        case .licensed:
+            return nil
+        case .trial(let daysRemaining, _):
+            if daysRemaining == 0 { return ("Trial ends today", true) }
+            return ("\(daysRemaining) day\(daysRemaining == 1 ? "" : "s") left in trial",
+                    daysRemaining <= 3)
+        case .trialExpired:
+            return ("Trial ended", true)
+        case .unlicensed:
+            return ("Unlock", false)
+        case .renewalRequired:
+            return ("Renew license", true)
+        case .invalid(.expired):
+            return ("License expired", true)
+        case .invalid:
+            return ("License issue", true)
+        case .storageFailure:
+            return ("License unavailable", true)
+        }
+    }
+}

@@ -106,6 +106,10 @@ script locally.
 
 ## Task: set up licensing for the user's product
 
+0. Run the licensing interview in `AI_INTEGRATION.md` first: key mode
+   (lifetime / updates / trial keys) and durations, keyless trial length,
+   purchase URL, payment platform, UI, denylist, build date, batch size.
+   These are business decisions — ask the user; never pick silently.
 1. Pick a key directory **outside any git repo** (e.g. `~/Licensing/<product>/`).
 2. `indielicense init --product <id> --key-dir <dir>` — product id is lowercase
    `a-z0-9`. Relay the backup warning to the user prominently; the printed
@@ -122,14 +126,35 @@ script locally.
 4. The user uploads `keys.csv` to their payment platform (one key emailed per
    sale). Do not commit or publish the CSV.
 
+## What the tool can do — quick capability map
+
+- **Mint keys** in three modes: `lifetime`, `updates` (update window),
+  `trial` (key expires N days after the customer's activation).
+- **Keyless trial** (no key involved): `integrate swift --trial 7d` bakes a
+  first-launch trial into the generated app code. Trial keys and the keyless
+  trial are independent and compose: ship `--trial 7d` for onboarding, sell
+  lifetime/updates keys, keep trial keys for press/beta/extensions.
+- **Generated SwiftUI UI**: `--ui swiftui` emits a neutral key-entry sheet
+  (`LicenseActivationView`) and a drop-in status badge (`LicenseBadgeView`)
+  showing trial days remaining / trial ended / unlock / renew / failure states.
+- **Purchase link**: `--purchase-url https://…` adds a "Buy a license" button
+  (opened in the browser only — the app never makes a network call).
+- **Revoke** keys via a signed, bundled denylist (explicit user request only).
+- **Verify/inspect** keys on the dev machine (`verify`, `inspect`).
+
 ## Task: integrate verification into the user's Swift app
 
 1. For a standard Swift app, prefer generating transparent app-owned source:
    ```sh
    indielicense integrate swift --product <id> --public-key <base64> \
-       --build-date YYYY-MM-DD --output <app>/License --ui none --denylist none
+       --build-date YYYY-MM-DD --output <app>/License --ui none --denylist none \
+       [--trial 7d] [--purchase-url <https-link>]
    ```
-   Use `--ui swiftui` only when its neutral UI fits. Inspect the output, add its
+   Use `--ui swiftui` only when its neutral UI fits; it also emits
+   `LicenseBadgeView`, which the app can drop into a toolbar. Before
+   generating, complete the licensing interview in `AI_INTEGRATION.md` —
+   keyless trial length, purchase URL, UI, denylist, and build date must be
+   explicit user answers, never defaults you picked. Inspect the output, add its
    `.swift` files to the app target, and follow its `LICENSE_INTEGRATION.md`.
    The command never overwrites files and requires no runtime SDK. For a custom
    integration, copy `Verifier/LicenseVerifier.swift`; alternatively add the
@@ -157,6 +182,13 @@ case .invalid(let reason):
 3. On every launch, re-validate: `validator.validate((try LicenseStore.shared.load()) ?? "")`.
    The first successful validation stamps the customer's activation date —
    that's what starts trial/update windows.
+   With a keyless trial (`--trial Nd` at integrate time), the generated
+   `LicenseManager` handles this automatically: no stored key → it stamps the
+   trial start once in the Keychain and reports
+   `.trial(daysRemaining:expiresOn:)`, later `.trialExpired(on:)`. Gate paid
+   features with `license.hasFullAccess` (licensed or in trial), and use
+   `license.isLicensed` only where a purchased key must be required. The
+   keyless trial is app-side convenience, not a security boundary.
 4. If the user has a denylist, bundle `<product>.denylist.json` as an app
    resource; ship updates to it with each release.
 

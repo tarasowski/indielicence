@@ -357,12 +357,18 @@ final class CLITests: FixedKeyTestCase {
 
     func runIntegrate(
         output: URL, ui: String = "none", denylist: String = "none",
-        publicKey: String? = nil
+        trial: String? = nil, purchaseURL: String? = nil, publicKey: String? = nil
     ) throws {
         var arguments = [
             "swift", "--product", "pixelpro", "--build-date", "2026-07-11",
             "--output", output.path, "--ui", ui, "--denylist", denylist,
         ]
+        if let trial {
+            arguments += ["--trial", trial]
+        }
+        if let purchaseURL {
+            arguments += ["--purchase-url", purchaseURL]
+        }
         if let publicKey {
             arguments += ["--public-key", publicKey]
         } else {
@@ -442,7 +448,8 @@ final class CLITests: FixedKeyTestCase {
         let names = try FileManager.default.contentsOfDirectory(atPath: output.path).sorted()
         XCTAssertEqual(names, [
             "LICENSE_INTEGRATION.md", "LicenseActivationView.swift",
-            "LicenseConfig.swift", "LicenseManager.swift", "LicenseVerifier.swift",
+            "LicenseBadgeView.swift", "LicenseConfig.swift", "LicenseManager.swift",
+            "LicenseVerifier.swift",
         ])
 
         let config = try String(
@@ -466,6 +473,102 @@ final class CLITests: FixedKeyTestCase {
 
         let verifier = try Data(contentsOf: output.appendingPathComponent("LicenseVerifier.swift"))
         XCTAssertEqual(verifier, Data(EmbeddedTemplates.verifier.utf8))
+    }
+
+    func testIntegrateWithoutTrialDisablesKeylessTrial() throws {
+        let output = tempDir.appendingPathComponent("NoTrial")
+        try runIntegrate(output: output, publicKey: publicKeyBase64)
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let trialDays: Int? = nil"))
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Keyless trial: disabled"))
+    }
+
+    func testIntegrateWithTrialEmbedsTrialDaysAndTrialPlumbing() throws {
+        let output = tempDir.appendingPathComponent("WithTrial")
+        try runIntegrate(output: output, trial: "7d", publicKey: publicKeyBase64)
+
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let trialDays: Int? = 7"))
+
+        let manager = try String(
+            contentsOf: output.appendingPathComponent("LicenseManager.swift"), encoding: .utf8)
+        XCTAssertTrue(manager.contains("case trial(daysRemaining: Int, expiresOn: Date)"))
+        XCTAssertTrue(manager.contains("case trialExpired(on: Date)"))
+        XCTAssertTrue(manager.contains("keyless-trial:"))
+        XCTAssertTrue(manager.contains("var hasFullAccess: Bool"))
+
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Keyless trial: 7 days, starts on first launch"))
+    }
+
+    func testIntegrateWithPurchaseURLEmbedsBuyLink() throws {
+        let output = tempDir.appendingPathComponent("WithPurchase")
+        try runIntegrate(
+            output: output, ui: "swiftui",
+            purchaseURL: "https://example.com/buy", publicKey: publicKeyBase64)
+
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains(
+            "static let purchaseURL: URL? = URL(string: \"https://example.com/buy\")"))
+
+        let badge = try String(
+            contentsOf: output.appendingPathComponent("LicenseBadgeView.swift"), encoding: .utf8)
+        XCTAssertTrue(badge.contains("struct LicenseBadgeView"))
+        XCTAssertTrue(badge.contains("LicenseActivationView(license: license)"))
+
+        let view = try String(
+            contentsOf: output.appendingPathComponent("LicenseActivationView.swift"), encoding: .utf8)
+        XCTAssertTrue(view.contains("LicenseConfig.purchaseURL"))
+
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Purchase link: `https://example.com/buy`"))
+    }
+
+    func testIntegrateWithoutPurchaseURLRendersNil() throws {
+        let output = tempDir.appendingPathComponent("NoPurchase")
+        try runIntegrate(output: output, publicKey: publicKeyBase64)
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let purchaseURL: URL? = nil"))
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Purchase link: not configured"))
+    }
+
+    func testIntegrateRejectsUnsafePurchaseURLsWithoutCreatingOutput() throws {
+        let rejected = [
+            "http://example.com/buy",              // not https
+            "example.com/buy",                     // not absolute
+            "https://",                            // no host
+            "ftp://example.com",                   // wrong scheme
+            "https://example.com/\"injected\"",    // would escape the string literal
+            "https://example.com/a\\b",            // backslash
+            "https://example.com/pay me",          // whitespace / non-canonical
+        ]
+        for bad in rejected {
+            let output = tempDir.appendingPathComponent("BadURL-\(bad.hashValue)")
+            XCTAssertThrowsError(
+                try runIntegrate(output: output, purchaseURL: bad, publicKey: publicKeyBase64),
+                "--purchase-url \(bad) must be rejected")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        }
+    }
+
+    func testIntegrateRejectsInvalidTrialWithoutCreatingOutput() throws {
+        for bad in ["0d", "abc", "-3d", "7dd"] {
+            let output = tempDir.appendingPathComponent("BadTrial-\(bad)")
+            XCTAssertThrowsError(
+                try runIntegrate(output: output, trial: bad, publicKey: publicKeyBase64),
+                "--trial \(bad) must be rejected")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        }
     }
 
     func testIntegrateAcceptsPublicKeyWithoutKeyDirectoryAndOmitsOptionalUI() throws {
@@ -597,6 +700,7 @@ final class SingleFileSyncTests: XCTestCase {
             (EmbeddedTemplates.licenseConfig, "Templates/Swift/LicenseConfig.swift.template"),
             (EmbeddedTemplates.licenseManager, "Templates/Swift/LicenseManager.swift.template"),
             (EmbeddedTemplates.activationView, "Templates/Swift/LicenseActivationView.swift.template"),
+            (EmbeddedTemplates.badgeView, "Templates/Swift/LicenseBadgeView.swift.template"),
             (EmbeddedTemplates.integrationGuide, "Templates/Swift/LICENSE_INTEGRATION.md.template"),
         ]
         for (embedded, path) in pairs {
