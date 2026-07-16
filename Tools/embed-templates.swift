@@ -11,6 +11,7 @@ let inputs: [(name: String, path: String)] = [
     ("licenseConfig", "Templates/Swift/LicenseConfig.swift.template"),
     ("licenseManager", "Templates/Swift/LicenseManager.swift.template"),
     ("activationView", "Templates/Swift/LicenseActivationView.swift.template"),
+    ("badgeView", "Templates/Swift/LicenseBadgeView.swift.template"),
     ("integrationGuide", "Templates/Swift/LICENSE_INTEGRATION.md.template"),
 ]
 

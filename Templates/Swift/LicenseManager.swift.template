@@ -4,6 +4,8 @@ import Foundation
 /// App-facing state derived from full offline validation.
 enum AppLicenseState: Equatable {
     case unlicensed
+    case trial(daysRemaining: Int, expiresOn: Date)
+    case trialExpired(on: Date)
     case licensed(LicenseInfo)
     case renewalRequired(until: Date)
     case invalid(LicenseInvalidReason)
@@ -21,6 +23,15 @@ final class LicenseManager: ObservableObject {
         return false
     }
 
+    /// True while the customer may use paid features: licensed, or inside the
+    /// keyless trial window when `LicenseConfig.trialDays` is set.
+    var hasFullAccess: Bool {
+        switch state {
+        case .licensed, .trial: return true
+        default: return false
+        }
+    }
+
     init() {
         refresh()
     }
@@ -29,7 +40,7 @@ final class LicenseManager: ObservableObject {
     func refresh() {
         do {
             guard let key = try LicenseStore.shared.load(), !key.isEmpty else {
-                state = .unlicensed
+                state = keylessTrialState()
                 return
             }
             apply(LicenseConfig.makeValidator().validate(key))
@@ -63,6 +74,30 @@ final class LicenseManager: ObservableObject {
         }
     }
 
+    /// State for a customer with no stored key. When `LicenseConfig.trialDays`
+    /// is set, the first call stamps the trial start day once in the Keychain
+    /// (reusing the verifier's stamp-once activation anchoring) and the window
+    /// is inclusive of its final day, matching trial-key semantics.
+    private func keylessTrialState() -> AppLicenseState {
+        guard let trialDays = LicenseConfig.trialDays, trialDays > 0 else {
+            return .unlicensed
+        }
+        do {
+            let startedAt = try LicenseStore.shared.activatedAt(
+                for: "keyless-trial:\(LicenseConfig.product)")
+            let expiresDay = unixDay(of: startedAt) + trialDays
+            let today = unixDay(of: Date())
+            guard today <= expiresDay else {
+                return .trialExpired(on: date(ofUnixDay: expiresDay))
+            }
+            return .trial(
+                daysRemaining: expiresDay - today,
+                expiresOn: date(ofUnixDay: expiresDay))
+        } catch {
+            return .storageFailure
+        }
+    }
+
     private func apply(_ result: LicenseValidationResult) {
         switch result {
         case .valid(let info):
@@ -75,4 +110,12 @@ final class LicenseManager: ObservableObject {
             state = .invalid(reason)
         }
     }
+}
+
+private func unixDay(of date: Date) -> Int {
+    Int(floor(date.timeIntervalSince1970 / 86_400))
+}
+
+private func date(ofUnixDay day: Int) -> Date {
+    Date(timeIntervalSince1970: Double(day) * 86_400)
 }

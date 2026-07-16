@@ -1,5 +1,10 @@
 # Build "IndieLicense" — offline license keys for indie Mac apps
 
+> **Historical document.** This is the original build plan, kept for context.
+> It is not maintained. Agents: follow `AGENTS.md` (operating rules),
+> `AI_INTEGRATION.md` (integration playbook), `SPEC.md` (wire format), and
+> `README.md` (current features) instead — they are canonical and current.
+
 ## What this is
 
 Build a complete, production-quality, open-source licensing toolkit for indie macOS developers, to be published on GitHub under the MIT license. Product name: **IndieLicense**; CLI binary is lowercase `indielicense`. Tagline: "Offline license keys for indie Mac apps. No server, ever." (Keep "Mac" out of the product name itself per Apple's trademark guidelines — it's fine in the tagline/README/marketing copy, just not as part of the name.)

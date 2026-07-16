@@ -13,7 +13,10 @@ impact. Never attach a real `.private` file or customer key export.
 IndieLicense protects license authenticity with Ed25519 and performs all
 validation offline. It does not attempt to prevent binary patching, key
 sharing, deletion of local state by the device owner, or deliberate system
-clock rollback. Static denylists affect only app releases that bundle them.
+clock rollback. The keyless trial in the generated app scaffolding is a
+conversion convenience with the same properties — a device owner who deletes
+the Keychain entry can restart it. Static denylists affect only app releases
+that bundle them.
 
 The private signing key and key-id state are the highest-value assets. Keep
 their directory outside source repositories, owned by the signing user, with
