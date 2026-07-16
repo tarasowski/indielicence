@@ -491,8 +491,8 @@ public final class LicenseStore: LicenseStateStore {
 
         // Reads that would raise the keychain password dialog must fail with
         // errSecInteractionNotAllowed instead — migration is silent or not at all.
-        SecKeychainSetUserInteractionAllowed(false)
-        defer { SecKeychainSetUserInteractionAllowed(true) }
+        _ = indielicense_SecKeychainSetUserInteractionAllowed(false)
+        defer { _ = indielicense_SecKeychainSetUserInteractionAllowed(true) }
 
         for item in items {
             guard let account = item[kSecAttrAccount as String] as? String else { continue }
@@ -512,6 +512,13 @@ public final class LicenseStore: LicenseStateStore {
         }
     }
 }
+
+/// `SecKeychainSetUserInteractionAllowed` is deprecated (macOS 10.10) yet still
+/// the only call that suppresses the legacy login-keychain ACL dialog during
+/// migration; its per-item replacements do not cover file-based keychains.
+/// Binding the symbol directly keeps builds with -warnings-as-errors clean.
+@_silgen_name("SecKeychainSetUserInteractionAllowed")
+private func indielicense_SecKeychainSetUserInteractionAllowed(_ state: DarwinBoolean) -> OSStatus
 
 private enum StoreError: Error, CustomStringConvertible {
     case status(String, OSStatus)
