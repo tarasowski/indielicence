@@ -22,6 +22,12 @@ enum LicenseConfig {
     /// anchored once in the Keychain; no license key is involved.
     static let trialDays: Int? = {{TRIAL_DAYS}}
 
+    /// Hard access policy: when true, `LicenseGateView` replaces the app's
+    /// content with a non-dismissible lock screen whenever there is no valid
+    /// key and no active keyless trial. When false the gate renders content
+    /// unchanged and the app decides feature-level consequences itself.
+    static let hardGate: Bool = {{HARD_GATE}}
+
     static func makeValidator() -> LicenseValidator {
         LicenseValidator(
             publicKey: publicKey,

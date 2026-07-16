@@ -19,6 +19,7 @@ Product id: PRODUCT_ID
 License mode: lifetime | updates | trial
 Public key: BASE64_PUBLIC_KEY_FROM_INDIELICENSE_INIT
 Keyless trial: none | 7d | 14d | ...   (built-in try-before-buy, no key needed)
+Trial policy: soft | hard   (soft: features degrade; hard: app locks until a key is entered)
 Purchase URL: none | https://YOUR_CHECKOUT_PAGE   (shown as a "Buy a license" button)
 
 Inspect this app to select the Swift or JavaScript verifier. Add a license-entry
@@ -57,6 +58,7 @@ licensing model is a business decision, not a technical one.
 | 3 | If **updates**: how long should the update window be? Months are fine — convert to days (12 months → `365d`, 6 months → `180d`). | `--updates-duration` | `365d` |
 | 4 | If **trial keys**: how many days until the key expires after activation? | `--expires` | `14d`; remind the user these are for press/beta/manual grants |
 | 5 | Should the app have a **built-in keyless trial** (everyone can try it on first launch, no key needed)? If yes, how many days? | `integrate --trial` | `7d` or `14d`; independent of question 2 and composes with any key mode |
+| 5b | When full access ends (trial over, no key): **soft** (app keeps running, features degrade — e.g. a watermark) or **hard** (the whole app locks behind a non-dismissible key-entry screen)? | `integrate --trial-policy soft\|hard` | `soft`; `hard` requires `--ui swiftui` and wrapping the root view in `LicenseGateView` |
 | 6 | Where do customers **buy** a license — what is the checkout page URL? | `integrate --purchase-url` | must be `https://…`; shown as a "Buy a license" button, only ever opened in the browser. "None yet" is acceptable — the button is simply hidden |
 | 7 | Which **payment platform** delivers the keys (MakersDrop, Gumroad, Lemon Squeezy, Paddle, Stripe, other)? | CSV upload guidance only | affects the handoff instructions, not the code |
 | 8 | Use the generated neutral **SwiftUI UI** (key-entry sheet + status badge), or does the app have its own? | `integrate --ui swiftui\|none` | `swiftui` when the app has no licensing UI yet |
@@ -132,6 +134,12 @@ Choose one supported path:
   `--purchase-url https://...` so the generated `LicenseBadgeView` (trial days
   remaining / unlock / renew badge) and activation sheet can offer a "Buy a
   license" button. The URL is only opened in the browser — never fetched.
+  Pass `--trial-policy hard` only when the user wants the app to truly stop
+  working without full access: the generated `LicenseGateView` then replaces
+  the app's content with a non-dismissible lock screen (key entry + purchase
+  link). Wrap the app's root view in `LicenseGateView(license:)` with an
+  app-level `LicenseManager` — a manager created inside a view behind the
+  gate can never unlock it.
   The command refuses to overwrite existing files. Inspect and adapt the output,
   add its `.swift` files to the app target, and follow `LICENSE_INTEGRATION.md`.
 - Custom Swift/macOS integration: copy the canonical
@@ -193,6 +201,9 @@ Add target-app tests covering at least:
 - keyless-trial behavior when configured: full access inside the window,
   `trialExpired` after it, no restart on relaunch, and a real key ending the
   trial;
+- hard-policy behavior when configured: the lock screen replaces the app when
+  access ends, cannot be dismissed, and a valid key restores the app
+  immediately;
 - a signed revoked key when a denylist is bundled;
 - persistence followed by validation on a later launch;
 - storage/configuration failure behavior.

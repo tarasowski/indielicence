@@ -357,12 +357,16 @@ final class CLITests: FixedKeyTestCase {
 
     func runIntegrate(
         output: URL, ui: String = "none", denylist: String = "none",
-        trial: String? = nil, purchaseURL: String? = nil, publicKey: String? = nil
+        trial: String? = nil, purchaseURL: String? = nil,
+        trialPolicy: String? = nil, publicKey: String? = nil
     ) throws {
         var arguments = [
             "swift", "--product", "pixelpro", "--build-date", "2026-07-11",
             "--output", output.path, "--ui", ui, "--denylist", denylist,
         ]
+        if let trialPolicy {
+            arguments += ["--trial-policy", trialPolicy]
+        }
         if let trial {
             arguments += ["--trial", trial]
         }
@@ -448,8 +452,8 @@ final class CLITests: FixedKeyTestCase {
         let names = try FileManager.default.contentsOfDirectory(atPath: output.path).sorted()
         XCTAssertEqual(names, [
             "LICENSE_INTEGRATION.md", "LicenseActivationView.swift",
-            "LicenseBadgeView.swift", "LicenseConfig.swift", "LicenseManager.swift",
-            "LicenseVerifier.swift",
+            "LicenseBadgeView.swift", "LicenseConfig.swift", "LicenseGateView.swift",
+            "LicenseManager.swift", "LicenseVerifier.swift",
         ])
 
         let config = try String(
@@ -540,6 +544,44 @@ final class CLITests: FixedKeyTestCase {
         let guide = try String(
             contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
         XCTAssertTrue(guide.contains("Purchase link: not configured"))
+    }
+
+    func testIntegrateHardTrialPolicyEmbedsGate() throws {
+        let output = tempDir.appendingPathComponent("HardGate")
+        try runIntegrate(
+            output: output, ui: "swiftui", trial: "7d",
+            trialPolicy: "hard", publicKey: publicKeyBase64)
+
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let hardGate: Bool = true"))
+
+        let gate = try String(
+            contentsOf: output.appendingPathComponent("LicenseGateView.swift"), encoding: .utf8)
+        XCTAssertTrue(gate.contains("struct LicenseGateView"))
+        XCTAssertTrue(gate.contains("allowDismiss: false"))
+
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Trial policy: hard"))
+    }
+
+    func testIntegrateDefaultsToSoftPolicy() throws {
+        let output = tempDir.appendingPathComponent("SoftGate")
+        try runIntegrate(output: output, ui: "swiftui", publicKey: publicKeyBase64)
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let hardGate: Bool = false"))
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Trial policy: soft"))
+    }
+
+    func testIntegrateRejectsHardPolicyWithoutSwiftUI() throws {
+        let output = tempDir.appendingPathComponent("HardNoUI")
+        XCTAssertThrowsError(
+            try runIntegrate(output: output, trialPolicy: "hard", publicKey: publicKeyBase64))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
     }
 
     func testIntegrateRejectsUnsafePurchaseURLsWithoutCreatingOutput() throws {
@@ -701,6 +743,7 @@ final class SingleFileSyncTests: XCTestCase {
             (EmbeddedTemplates.licenseManager, "Templates/Swift/LicenseManager.swift.template"),
             (EmbeddedTemplates.activationView, "Templates/Swift/LicenseActivationView.swift.template"),
             (EmbeddedTemplates.badgeView, "Templates/Swift/LicenseBadgeView.swift.template"),
+            (EmbeddedTemplates.gateView, "Templates/Swift/LicenseGateView.swift.template"),
             (EmbeddedTemplates.integrationGuide, "Templates/Swift/LICENSE_INTEGRATION.md.template"),
         ]
         for (embedded, path) in pairs {

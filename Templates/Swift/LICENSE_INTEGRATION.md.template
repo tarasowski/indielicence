@@ -10,6 +10,7 @@ Generated configuration:
 - Key persistence: macOS Keychain
 - Denylist: {{DENYLIST_DESCRIPTION}}
 - Keyless trial: {{TRIAL_DESCRIPTION}}
+- Trial policy: {{TRIAL_POLICY_DESCRIPTION}}
 - Purchase link: {{PURCHASE_DESCRIPTION}}
 - SwiftUI activation view: {{UI_DESCRIPTION}}
 
@@ -26,6 +27,12 @@ Generated configuration:
    "Unlock", renewal, and failure states, opens the activation sheet on click,
    and disappears entirely once the app is licensed. The sheet shows a "Buy a
    license" button when `LicenseConfig.purchaseURL` is set.
+   With the hard trial policy, additionally wrap the app's root view:
+   `LicenseGateView(license: license) { MainAppView() }` — when the trial is
+   over (or no valid key exists), the whole app is replaced by a
+   non-dismissible lock screen with key entry and the purchase link. The
+   `LicenseManager` powering the gate must live at app level, not inside a
+   view that only appears after the gate.
 5. Keep checkout, prices, feature policy, copy, and localization in the app.
 6. Update `LicenseConfig.buildDate` to the immutable UTC release day before
    every release. Never calculate it from `Date()` or file metadata.
@@ -48,6 +55,8 @@ can reset it, just as they could request another trial key.
 - Trial expiry or update-window boundaries behave correctly for the key mode.
 - With a keyless trial: full access during the window, `trialExpired` after,
   and the trial does not restart on relaunch.
+- With the hard policy: the lock screen appears when access ends, cannot be
+  dismissed, and activating a valid key immediately restores the app.
 - Storage/configuration failures fail closed.
 - A bundled signed denylist rejects a revoked key, when denylists are enabled.
 - Every paid feature checks the same license state.

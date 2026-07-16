@@ -1,8 +1,11 @@
 import SwiftUI
 
 /// Neutral, price-free key entry. Adapt the copy and styling to your app.
+/// Set `allowDismiss: false` when embedding in a blocking context (the hard
+/// gate) where "Not now" must not be offered.
 struct LicenseActivationView: View {
     @ObservedObject var license: LicenseManager
+    var allowDismiss: Bool = true
     @Environment(\.dismiss) private var dismiss
     @State private var key = ""
 
@@ -41,8 +44,10 @@ struct LicenseActivationView: View {
                     .font(.callout)
             }
 
-            Button("Not now") { dismiss() }
-                .buttonStyle(.plain)
+            if allowDismiss {
+                Button("Not now") { dismiss() }
+                    .buttonStyle(.plain)
+            }
         }
         .padding(28)
         .frame(width: 380)

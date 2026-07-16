@@ -17,7 +17,7 @@ struct IndieLicenseCLI: ParsableCommand {
         Generate Ed25519-signed license keys on your own machine, sell them \
         through any payment platform, and validate them fully offline in your app.
         """,
-        version: "1.2.0",
+        version: "1.3.0",
         subcommands: [Init.self, Generate.self, Verify.self, Inspect.self, Revoke.self, Integrate.self]
     )
 }
