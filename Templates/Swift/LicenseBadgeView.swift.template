@@ -9,20 +9,18 @@ struct LicenseBadgeView: View {
 
     var body: some View {
         if let badge {
+            // System bordered capsule so the badge matches native toolbar
+            // control metrics instead of drawing its own background.
             Button {
                 showingActivation = true
             } label: {
                 Text(badge.text)
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        badge.urgent
-                            ? AnyShapeStyle(.orange.opacity(0.2))
-                            : AnyShapeStyle(.quaternary),
-                        in: Capsule())
+                    .font(.callout.weight(.medium))
+                    .padding(.horizontal, 6)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(badge.urgent ? .orange : .secondary)
             .help("Manage your license")
             .sheet(isPresented: $showingActivation) {
                 LicenseActivationView(license: license)
