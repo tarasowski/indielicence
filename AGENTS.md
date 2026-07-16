@@ -174,7 +174,7 @@ let validator = LicenseValidator(
 
 switch validator.validate(pastedKey) {
 case .valid(let info):
-    try LicenseStore.shared.save(key: pastedKey) // Keychain, survives reinstalls
+    try LicenseStore.shared.save(key: pastedKey) // file store, survives reinstalls
     // info.isLifetime, info.effectiveUpdatesUntil, info.effectiveExpiresAt
 case .invalid(.updatesExpired(let on)):
     // still licensed for THIS build — show "renew for updates until \(on)", not an error
@@ -188,7 +188,7 @@ case .invalid(let reason):
    that's what starts trial/update windows.
    With a keyless trial (`--trial Nd` at integrate time), the generated
    `LicenseManager` handles this automatically: no stored key → it stamps the
-   trial start once in the Keychain and reports
+   trial start once in the license file store and reports
    `.trial(daysRemaining:expiresOn:)`, later `.trialExpired(on:)`. Gate paid
    features with `license.hasFullAccess` (licensed or in trial), and use
    `license.isLicensed` only where a purchased key must be required. The

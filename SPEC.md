@@ -104,7 +104,7 @@ are derived labels, fully determined by field presence:
 ## Activation anchoring
 
 The verifier stores a per-license **activatedAt** date locally (the Swift
-implementation uses the macOS Keychain). The storage identifier MUST bind the
+implementation uses tamper-evident files under Application Support). The storage identifier MUST bind the
 product, public key, and exact signed payload; a bare numeric key id is not a
 sufficient identifier because ids can overlap after key rotation or across
 products.

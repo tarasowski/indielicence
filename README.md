@@ -41,7 +41,7 @@ If this repo disappears tomorrow, your keys and your app keep working.
 
 ## Fast Swift integration — generated source, not an SDK
 
-Generate the standalone verifier, public configuration, Keychain-backed
+Generate the standalone verifier, public configuration, file-store-backed
 manager, optional neutral SwiftUI key-entry view + status badge, and a short
 handoff guide:
 
@@ -111,7 +111,8 @@ it with `validator.validate((try LicenseStore.shared.load()) ?? "")` on every
 launch. Handle thrown storage errors as an integration/storage failure; never
 silently start a new activation window.
 The **first successful validation stamps the customer's activation date**
-(Keychain, survives reinstalls) — that's what starts trial/update windows,
+(tamper-evident files in Application Support, survives reinstalls) — that's
+what starts trial/update windows,
 never the day you generated the CSV.
 
 Manual integration paths use the same verifier:
@@ -174,9 +175,9 @@ you mint the key          customer buys it        customer pastes it        day 
   key stores just "14 days" ─────────────────────► countdown starts NOW
 ```
 
-- The app stamps `activatedAt` in the Keychain on the **first successful
-  validation** and never resets it — relaunching or reinstalling doesn't
-  restart a trial (Keychain survives reinstalls).
+- The app stamps `activatedAt` in the license file store on the **first
+  successful validation** and never resets it — relaunching or reinstalling
+  doesn't restart a trial (the files survive reinstalls).
 - `--mode updates` works the same way: the 365-day update window counts from
   each customer's own activation, not from when you generated the batch.
 - The `issued_at` column in the CSV is bookkeeping only — it is never used in
@@ -199,7 +200,7 @@ indielicense integrate swift --product <id> --build-date YYYY-MM-DD \
 ```
 
 With `--trial 7d`, an app with no stored license key stamps the trial start
-day once in the Keychain on first launch (the same stamp-once anchoring used
+day once in the license file store on first launch (the same stamp-once anchoring used
 for `activatedAt`) and reports `.trial(daysRemaining:expiresOn:)`, then
 `.trialExpired(on:)` after the window — same inclusive day math as trial keys.
 Activating a purchased key ends the trial. Gate paid features with

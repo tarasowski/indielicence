@@ -8,7 +8,7 @@ import XCTest
 // MARK: - Test scaffolding
 
 /// In-memory activation store with LicenseStore's stamp-once semantics,
-/// so expiry tests can control "today" without touching the Keychain.
+/// so expiry tests can control "today" without touching the on-disk store.
 final class MemoryActivationStore: LicenseStateStore {
     var today: Date
     private(set) var stamped: [String: Date] = [:]

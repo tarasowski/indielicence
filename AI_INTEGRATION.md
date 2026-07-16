@@ -127,7 +127,7 @@ Choose one supported path:
   Select `--ui swiftui` only when a neutral price-free key-entry view is useful,
   and `--denylist bundled` only when the signed denylist will be an app resource.
   Add `--trial 7d` only when the user wants a keyless first-launch trial: the
-  generated `LicenseManager` then stamps a trial start day once in the Keychain
+  generated `LicenseManager` then stamps a trial start day once in the license file store
   and reports `.trial`/`.trialExpired` states for customers with no stored key.
   Gate paid features with `hasFullAccess` in that case, not `isLicensed`.
   With `--ui swiftui`, ask the user for their checkout page and pass it as
@@ -167,8 +167,8 @@ The integration is incomplete until all of these exist:
 3. Add a license-entry screen that accepts a pasted key and shows useful,
    non-technical errors.
 4. On the first successful validation, persist the license and activation
-   state securely. Swift integrations use the included Keychain-backed
-   `LicenseStore`. JavaScript integrations must persist `activatedAt` and the
+   state securely. Swift integrations use the included file-backed
+   `LicenseStore` (tamper-evident HMAC'd files under Application Support). JavaScript integrations must persist `activatedAt` and the
    greatest accepted `denylistSequence` and pass both back on later checks.
 5. Revalidate the stored license on every app launch before unlocking paid
    features. Storage/configuration failures must fail closed and remain
