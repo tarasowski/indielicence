@@ -307,28 +307,53 @@ private func denylistMessage(
     return Data(lines.joined(separator: "\n").utf8)
 }
 
-// MARK: - Keychain persistence
+// MARK: - File persistence
 
+/// Stores license state as tamper-evident files under
+/// ~/Library/Application Support/IndieLicense/<service>/. Files are readable
+/// by every binary the customer runs — unlike the Keychain, whose per-item
+/// code-signature ACL raises a password dialog whenever a rebuilt, re-signed,
+/// or sibling executable (a bundled helper) touches the item.
+/// Existing Keychain items from older versions are migrated silently once,
+/// then deleted so the dialog can never appear again.
 public final class LicenseStore: LicenseStateStore {
     public static let shared = LicenseStore()
     private static let operationLock = NSLock()
     private let service: String
+    private let directory: URL
+    private let macKey: SymmetricKey
+    private var migrationChecked = false
 
     public init(service: String? = nil) {
-        self.service = service ?? "IndieLicense:" +
+        let service = service ?? "IndieLicense:" +
             (Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName)
+        self.service = service
+        self.directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/IndieLicense", isDirectory: true)
+            .appendingPathComponent(Self.sanitized(service), isDirectory: true)
+        // Obfuscation, not secrecy: makes casual editing of the files fail
+        // closed as .corrupt instead of silently changing license state.
+        self.macKey = SymmetricKey(
+            data: SHA256.hash(data: Data(("indielicense-store-v1\n" + service).utf8)))
     }
 
     public func save(key: String) throws {
-        try Self.operationLock.withLock { try upsert(account: "license-key", value: key) }
+        try Self.operationLock.withLock {
+            migrateFromKeychainIfNeeded()
+            try upsert(account: "license-key", value: key)
+        }
     }
 
     public func load() throws -> String? {
-        try Self.operationLock.withLock { try read(account: "license-key") }
+        try Self.operationLock.withLock {
+            migrateFromKeychainIfNeeded()
+            return try read(account: "license-key")
+        }
     }
 
     public func activatedAt(for licenseIdentifier: String) throws -> Date {
         try Self.operationLock.withLock {
+            migrateFromKeychainIfNeeded()
             let account = "activated:\(licenseIdentifier)"
             if let stored = try read(account: account) {
                 guard let day = Int(stored) else { throw StoreError.corrupt(account) }
@@ -346,6 +371,7 @@ public final class LicenseStore: LicenseStateStore {
 
     public func highestDenylistSequence(for productIdentifier: String) throws -> UInt32? {
         try Self.operationLock.withLock {
+            migrateFromKeychainIfNeeded()
             guard let stored = try read(account: "denylist:\(productIdentifier)") else { return nil }
             guard let sequence = UInt32(stored), sequence >= 1 else {
                 throw StoreError.corrupt("denylist:\(productIdentifier)")
@@ -357,6 +383,7 @@ public final class LicenseStore: LicenseStateStore {
     public func recordDenylistSequence(_ sequence: UInt32, for productIdentifier: String) throws {
         guard sequence >= 1 else { throw StoreError.corrupt("denylist sequence") }
         try Self.operationLock.withLock {
+            migrateFromKeychainIfNeeded()
             let account = "denylist:\(productIdentifier)"
             if let stored = try read(account: account) {
                 guard let current = UInt32(stored) else { throw StoreError.corrupt(account) }
@@ -367,43 +394,131 @@ public final class LicenseStore: LicenseStateStore {
         }
     }
 
-    private func query(account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: account]
+    // MARK: File primitives
+
+    private static func sanitized(_ name: String) -> String {
+        String(name.map { $0.isLetter || $0.isNumber || "._-".contains($0) ? $0 : "_" })
+    }
+
+    private func fileURL(account: String) -> URL {
+        directory.appendingPathComponent(Self.sanitized(account), isDirectory: false)
+    }
+
+    /// One line per file: "v1<TAB>base64(value)<TAB>hex-HMAC". The MAC binds
+    /// service and the unsanitized account name so files cannot be renamed or
+    /// copied between accounts to alter state.
+    private func encode(account: String, value: String) -> Data {
+        let payload = Data(value.utf8).base64EncodedString()
+        let mac = HMAC<SHA256>.authenticationCode(
+            for: Data("\(service)\n\(account)\n\(payload)".utf8), using: macKey)
+        let hex = mac.map { String(format: "%02x", $0) }.joined()
+        return Data("v1\t\(payload)\t\(hex)\n".utf8)
     }
 
     private func read(account: String) throws -> String? {
-        var q = query(account: account)
-        q[kSecReturnData as String] = true
-        q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: AnyObject?
-        let status = SecItemCopyMatching(q as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else {
-            throw StoreError.status("read", status)
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL(account: account))
+        } catch let error as NSError
+            where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
+            return nil
+        } catch {
+            throw StoreError.status("read", errSecIO)
+        }
+        let line = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = line.split(separator: "\t", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "v1",
+              let decoded = Data(base64Encoded: String(parts[1])),
+              let value = String(data: decoded, encoding: .utf8),
+              encode(account: account, value: value) == Data(line.utf8) + Data("\n".utf8) else {
+            throw StoreError.corrupt(account)
         }
         return value
     }
 
+    /// Cross-process exclusive create: write to a unique temp file, then
+    /// hard-link it into place — link(2) fails atomically if the name exists.
     private func insertIfAbsent(account: String, value: String) throws -> Bool {
-        var q = query(account: account)
-        q[kSecValueData as String] = Data(value.utf8)
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let status = SecItemAdd(q as CFDictionary, nil)
-        if status == errSecDuplicateItem { return false }
-        guard status == errSecSuccess else { throw StoreError.status("insert", status) }
-        return true
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            let temp = directory.appendingPathComponent(
+                ".tmp-" + ProcessInfo.processInfo.globallyUniqueString)
+            try encode(account: account, value: value).write(to: temp)
+            defer { try? fm.removeItem(at: temp) }
+            do {
+                try fm.linkItem(at: temp, to: fileURL(account: account))
+            } catch let error as NSError
+                where error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError {
+                return false
+            }
+            return true
+        } catch {
+            throw StoreError.status("insert", errSecIO)
+        }
     }
 
     private func upsert(account: String, value: String) throws {
-        if try insertIfAbsent(account: account, value: value) { return }
-        let attributes = [kSecValueData as String: Data(value.utf8)]
-        let status = SecItemUpdate(query(account: account) as CFDictionary, attributes as CFDictionary)
-        guard status == errSecSuccess else { throw StoreError.status("update", status) }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try encode(account: account, value: value)
+                .write(to: fileURL(account: account), options: .atomic)
+        } catch {
+            throw StoreError.status("update", errSecIO)
+        }
+    }
+
+    // MARK: Legacy Keychain migration
+
+    /// Copies items this binary can read without a password dialog into the
+    /// file store, then deletes every Keychain item under this service so the
+    /// signature-ACL prompt is gone for good. Items the ACL refuses to release
+    /// silently are dropped: a keyless trial re-anchors on its own and a paid
+    /// key can be pasted again, whereas keeping the item would keep the dialog.
+    private func migrateFromKeychainIfNeeded() {
+        guard !migrationChecked else { return }
+        migrationChecked = true
+
+        let listQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true]
+        var listResult: AnyObject?
+        guard SecItemCopyMatching(listQuery as CFDictionary, &listResult) == errSecSuccess,
+              let items = listResult as? [[String: Any]], !items.isEmpty else { return }
+
+        // Reads that would raise the keychain password dialog must fail with
+        // errSecInteractionNotAllowed instead — migration is silent or not at all.
+        _ = indielicense_SecKeychainSetUserInteractionAllowed(false)
+        defer { _ = indielicense_SecKeychainSetUserInteractionAllowed(true) }
+
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String else { continue }
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account]
+            var readQuery = query
+            readQuery[kSecReturnData as String] = true
+            readQuery[kSecMatchLimit as String] = kSecMatchLimitOne
+            var data: AnyObject?
+            if SecItemCopyMatching(readQuery as CFDictionary, &data) == errSecSuccess,
+               let data = data as? Data, let value = String(data: data, encoding: .utf8) {
+                _ = try? insertIfAbsent(account: account, value: value)
+            }
+            SecItemDelete(query as CFDictionary)
+        }
     }
 }
+
+/// `SecKeychainSetUserInteractionAllowed` is deprecated (macOS 10.10) yet still
+/// the only call that suppresses the legacy login-keychain ACL dialog during
+/// migration; its per-item replacements do not cover file-based keychains.
+/// Binding the symbol directly keeps builds with -warnings-as-errors clean.
+@_silgen_name("SecKeychainSetUserInteractionAllowed")
+private func indielicense_SecKeychainSetUserInteractionAllowed(_ state: DarwinBoolean) -> OSStatus
 
 private enum StoreError: Error, CustomStringConvertible {
     case status(String, OSStatus)
@@ -411,8 +526,8 @@ private enum StoreError: Error, CustomStringConvertible {
     case rollback
     var description: String {
         switch self {
-        case .status(let operation, let status): return "Keychain \(operation) failed (OSStatus \(status))"
-        case .corrupt(let account): return "Keychain value '\(account)' is corrupt"
+        case .status(let operation, let status): return "License store \(operation) failed (OSStatus \(status))"
+        case .corrupt(let account): return "License store value '\(account)' is corrupt"
         case .rollback: return "denylist sequence rollback"
         }
     }

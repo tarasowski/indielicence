@@ -75,7 +75,7 @@ final class LicenseManager: ObservableObject {
     }
 
     /// State for a customer with no stored key. When `LicenseConfig.trialDays`
-    /// is set, the first call stamps the trial start day once in the Keychain
+    /// is set, the first call stamps the trial start day once in the file store
     /// (reusing the verifier's stamp-once activation anchoring) and the window
     /// is inclusive of its final day, matching trial-key semantics.
     private func keylessTrialState() -> AppLicenseState {

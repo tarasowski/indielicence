@@ -7,7 +7,7 @@ Generated configuration:
 
 - Product: `{{PRODUCT}}`
 - Release build date: `{{BUILD_DATE}}` UTC
-- Key persistence: macOS Keychain
+- Key persistence: tamper-evident files under `~/Library/Application Support/IndieLicense/`
 - Denylist: {{DENYLIST_DESCRIPTION}}
 - Keyless trial: {{TRIAL_DESCRIPTION}}
 - Trial policy: {{TRIAL_POLICY_DESCRIPTION}}
@@ -37,12 +37,12 @@ Generated configuration:
 6. Update `LicenseConfig.buildDate` to the immutable UTC release day before
    every release. Never calculate it from `Date()` or file metadata.
 
-`LicenseManager` revalidates the Keychain value during initialization and fails
+`LicenseManager` revalidates the stored key during initialization and fails
 closed on invalid configuration or inaccessible storage. `renewalRequired`
 means the key still covers eligible older releases but not this newer build.
 
 When `LicenseConfig.trialDays` is set, a customer with no stored key gets a
-keyless trial: the start day is stamped once in the Keychain on first launch,
+keyless trial: the start day is stamped once in the license file store on first launch,
 the window is inclusive of its final day (same day math as trial keys), and
 after it ends the state becomes `trialExpired`. Activating a real key ends the
 trial. The trial is a convenience, not a security boundary — a determined user

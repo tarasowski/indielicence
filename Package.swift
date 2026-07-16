@@ -16,7 +16,7 @@ let package = Package(
     ],
     targets: [
         // Verification-only library. Zero secrets, zero dependencies beyond
-        // CryptoKit (plus Security for the Keychain-backed LicenseStore).
+        // CryptoKit (plus Security for LicenseStore's legacy Keychain migration).
         .target(
             name: "IndieLicense",
             path: "Sources/IndieLicense"

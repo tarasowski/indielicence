@@ -19,7 +19,7 @@ enum LicenseConfig {
 
     /// Keyless trial length in days, or nil when the app has no built-in trial.
     /// The trial starts on the customer's first launch and the start day is
-    /// anchored once in the Keychain; no license key is involved.
+    /// anchored once in the license file store; no license key is involved.
     static let trialDays: Int? = {{TRIAL_DAYS}}
 
     /// Hard access policy: when true, `LicenseGateView` replaces the app's
