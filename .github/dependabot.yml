@@ -10,3 +10,8 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies", "security"]
+    ignore:
+      # Pinned to the newest release compatible with this package's
+      # Swift 5.9 floor (see Package.swift); newer releases fail CI.
+      # Drop this rule when the Swift tools version is raised.
+      - dependency-name: "github.com/apple/swift-argument-parser"
