@@ -80,6 +80,8 @@ The output contains:
   "Buy a license" link;
 - optional `LicenseBadgeView.swift` — drop-in trial/unlock/renew status badge
   that opens the activation sheet;
+- optional `LicenseGateView.swift` — wrap the root view to lock the whole app
+  behind key entry when full access ends (`--trial-policy hard`);
 - `LICENSE_INTEGRATION.md` — wiring and test checklist.
 
 `LicenseManager` exposes `isLicensed`, `hasFullAccess` (licensed **or** in
@@ -208,6 +210,14 @@ This is purely app-side convenience — no wire-format change, no signature,
 nothing minted. Like the rest of the trial machinery it is a conversion tool,
 not a security boundary.
 
+**Soft or hard?** By default the policy is *soft*: when the trial ends the
+app keeps running and you decide what degrades (a watermark, disabled
+export, …). With `--trial-policy hard` the scaffold also enforces the
+opposite model — wrap your root view in `LicenseGateView(license:) { … }`
+and the entire app is replaced by a non-dismissible lock screen ("Your free
+trial has ended", key entry, "Buy a license") until a valid key is
+activated.
+
 ### The drop-in badge
 
 With `--ui swiftui` the scaffold also includes `LicenseBadgeView`, a
@@ -238,7 +248,8 @@ indielicense inspect <key>                  decode a key, no key material needed
 indielicense integrate swift --product <id> --build-date YYYY-MM-DD
                      --output <app-source-directory> [--ui none|swiftui]
                      [--denylist none|bundled] [--trial 7d]
-                     [--purchase-url <https-link>] [--public-key <base64>]
+                     [--trial-policy soft|hard] [--purchase-url <https-link>]
+                     [--public-key <base64>]
                                             generate app-owned Swift plumbing
 indielicense revoke <key_id> [--note "refunded"] --key-dir <secure-directory>
                                             add to the signed denylist

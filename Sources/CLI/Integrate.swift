@@ -17,6 +17,10 @@ enum IntegrationDenylist: String, ExpressibleByArgument, CaseIterable {
     case none, bundled
 }
 
+enum IntegrationTrialPolicy: String, ExpressibleByArgument, CaseIterable {
+    case soft, hard
+}
+
 struct Integrate: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Generate app-owned licensing source files without adding an SDK.",
@@ -55,6 +59,14 @@ struct Integrate: ParsableCommand {
     first launch and needs no license key; omit for no built-in trial.
     """)
     var trial: String?
+
+    @Option(name: .customLong("trial-policy"), help: """
+    soft or hard. Soft: the app keeps running without full access and decides \
+    feature-level consequences itself. Hard: the generated LicenseGateView \
+    replaces the app's content with a non-dismissible key-entry lock screen \
+    whenever there is no valid key and no active keyless trial.
+    """)
+    var trialPolicy: IntegrationTrialPolicy = .soft
 
     @Option(name: .customLong("purchase-url"), help: """
     Optional https link where customers buy a license key. Shown as a 'Buy a \
@@ -99,12 +111,18 @@ struct Integrate: ParsableCommand {
                     "DENYLIST_URL": denylistExpression(product: resolvedProduct),
                     "TRIAL_DAYS": trialDays.map(String.init) ?? "nil",
                     "PURCHASE_URL": purchase.map { "URL(string: \"\($0)\")" } ?? "nil",
+                    "HARD_GATE": trialPolicy == .hard ? "true" : "false",
                 ])),
             ("LicenseManager.swift", EmbeddedTemplates.licenseManager),
         ]
         if ui == .swiftui {
             files.append(("LicenseActivationView.swift", EmbeddedTemplates.activationView))
             files.append(("LicenseBadgeView.swift", EmbeddedTemplates.badgeView))
+            files.append(("LicenseGateView.swift", EmbeddedTemplates.gateView))
+        }
+        if trialPolicy == .hard && ui != .swiftui {
+            throw CLIError.message(
+                "--trial-policy hard requires --ui swiftui: the lock screen is enforced by the generated LicenseGateView")
         }
         files.append(("LICENSE_INTEGRATION.md", try render(
             EmbeddedTemplates.integrationGuide,
@@ -118,6 +136,9 @@ struct Integrate: ParsableCommand {
                     "\($0) day\($0 == 1 ? "" : "s"), starts on first launch"
                 } ?? "disabled",
                 "PURCHASE_DESCRIPTION": purchase.map { "`\($0)`" } ?? "not configured",
+                "TRIAL_POLICY_DESCRIPTION": trialPolicy == .hard
+                    ? "hard — LicenseGateView locks the app without full access"
+                    : "soft — the app decides feature-level consequences",
                 "UI_DESCRIPTION": ui == .swiftui ? "included" : "not generated",
             ])))
 

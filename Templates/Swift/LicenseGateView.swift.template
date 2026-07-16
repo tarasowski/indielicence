@@ -1,0 +1,45 @@
+import SwiftUI
+
+/// Wrap the app's root view to enforce the hard access policy: when
+/// `LicenseConfig.hardGate` is true and the customer has neither a valid key
+/// nor an active keyless trial, the content is replaced by a non-dismissible
+/// lock screen with key entry and the purchase link. With the soft policy
+/// (`hardGate == false`) it renders the content unchanged, so wrapping is
+/// always safe.
+///
+///     LicenseGateView(license: license) {
+///         MainAppView()
+///     }
+struct LicenseGateView<Content: View>: View {
+    @ObservedObject var license: LicenseManager
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if LicenseConfig.hardGate && !license.hasFullAccess {
+            VStack(spacing: 8) {
+                Text(headline)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+
+                LicenseActivationView(license: license, allowDismiss: false)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
+        } else {
+            content()
+        }
+    }
+
+    private var headline: String {
+        switch license.state {
+        case .trialExpired:
+            return "Your free trial has ended"
+        case .renewalRequired:
+            return "This version isn't covered by your license"
+        case .storageFailure:
+            return "License storage is unavailable"
+        default:
+            return "A license is required"
+        }
+    }
+}

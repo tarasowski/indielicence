@@ -139,6 +139,10 @@ script locally.
   showing trial days remaining / trial ended / unlock / renew / failure states.
 - **Purchase link**: `--purchase-url https://…` adds a "Buy a license" button
   (opened in the browser only — the app never makes a network call).
+- **Trial policy**: `--trial-policy soft|hard`. Soft (default): the app keeps
+  running and decides feature-level consequences. Hard: the generated
+  `LicenseGateView` locks the entire app behind a non-dismissible key-entry
+  screen whenever there is no valid key and no active keyless trial.
 - **Revoke** keys via a signed, bundled denylist (explicit user request only).
 - **Verify/inspect** keys on the dev machine (`verify`, `inspect`).
 
