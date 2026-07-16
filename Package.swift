@@ -12,7 +12,7 @@ let package = Package(
     ],
     dependencies: [
         // 1.7.2 is the newest release compatible with this package's Swift 5.9 floor.
-        .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.7.2"),
+        .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.8.2"),
     ],
     targets: [
         // Verification-only library. Zero secrets, zero dependencies beyond
