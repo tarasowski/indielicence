@@ -142,6 +142,12 @@ Choose one supported path:
   gate can never unlock it.
   The command refuses to overwrite existing files. Inspect and adapt the output,
   add its `.swift` files to the app target, and follow `LICENSE_INTEGRATION.md`.
+  Every generated Swift integration includes a self-contained development
+  harness: Debug builds default to simulated full access and automatically add
+  an **IndieLicense Testing** menu. It is guarded by `#if DEBUG`,
+  never touches real persisted state while simulating, has no dependency on a
+  particular build/launch tool, and is absent from Release builds. Do not add
+  AppUnbound-specific bundle-id or channel checks to this generalized harness.
 - Custom Swift/macOS integration: copy the canonical
   `Verifier/LicenseVerifier.swift` into the app target. The SPM library product
   `IndieLicense` remains an alternative.

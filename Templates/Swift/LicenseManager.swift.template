@@ -18,6 +18,10 @@ enum AppLicenseState: Equatable {
 final class LicenseManager: ObservableObject {
     @Published private(set) var state: AppLicenseState = .unlicensed
 
+#if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
+    @Published private(set) var developmentScenario: IndieLicenseDevelopmentScenario
+#endif
+
     var isLicensed: Bool {
         if case .licensed = state { return true }
         return false
@@ -33,11 +37,23 @@ final class LicenseManager: ObservableObject {
     }
 
     init() {
+#if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
+        developmentScenario = IndieLicenseDevelopmentScenario.requested() ?? .fullAccess
+#endif
         refresh()
+#if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
+        IndieLicenseDevelopmentMenu.shared.install(for: self)
+#endif
     }
 
     /// Revalidates the stored key. Call after replacing bundled denylist data.
     func refresh() {
+#if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
+        if let developmentState = developmentScenario.state() {
+            state = developmentState
+            return
+        }
+#endif
         do {
             guard let key = try LicenseStore.shared.load(), !key.isEmpty else {
                 state = keylessTrialState()
@@ -49,6 +65,16 @@ final class LicenseManager: ObservableObject {
         }
     }
 
+#if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
+    /// Switches state in memory without touching the persisted license or
+    /// keyless-trial anchor. Available only in Debug builds.
+    func setDevelopmentScenario(_ scenario: IndieLicenseDevelopmentScenario) {
+        developmentScenario = scenario
+        refresh()
+        IndieLicenseDevelopmentMenu.shared.updateSelection()
+    }
+#endif
+
     /// Validates and securely persists a pasted key.
     @discardableResult
     func activate(key: String) -> Bool {
@@ -57,6 +83,15 @@ final class LicenseManager: ObservableObject {
             state = .invalid(.malformed("empty key"))
             return false
         }
+
+#if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
+        // Simulated states must never persist a real or fake key. Treat a
+        // non-empty entry as a successful simulated activation instead.
+        if developmentScenario != .real {
+            setDevelopmentScenario(.fullAccess)
+            return true
+        }
+#endif
 
         let result = LicenseConfig.makeValidator().validate(key)
         guard case .valid(let info) = result else {

@@ -400,7 +400,7 @@ final class CLITests: FixedKeyTestCase {
         XCTAssertTrue(fields.allSatisfy { $0[2] == today })
 
         // Every minted key must actually validate, with matching durations.
-        let validator = makeValidator()
+        let validator = makeValidator(store: MemoryActivationStore(today: Date()))
         for row in fields {
             guard case .valid(let info) = validator.validate(row[1]) else {
                 return XCTFail("CSV key \(row[0]) should validate")
@@ -452,8 +452,8 @@ final class CLITests: FixedKeyTestCase {
         let names = try FileManager.default.contentsOfDirectory(atPath: output.path).sorted()
         XCTAssertEqual(names, [
             "LICENSE_INTEGRATION.md", "LicenseActivationView.swift",
-            "LicenseBadgeView.swift", "LicenseConfig.swift", "LicenseGateView.swift",
-            "LicenseManager.swift", "LicenseVerifier.swift",
+            "LicenseBadgeView.swift", "LicenseConfig.swift", "LicenseDevelopment.swift",
+            "LicenseGateView.swift", "LicenseManager.swift", "LicenseVerifier.swift",
         ])
 
         let config = try String(
@@ -467,6 +467,13 @@ final class CLITests: FixedKeyTestCase {
             contentsOf: output.appendingPathComponent("LicenseManager.swift"), encoding: .utf8)
         XCTAssertTrue(manager.contains("func activate(key: String) -> Bool"))
         XCTAssertTrue(manager.contains("case renewalRequired(until: Date)"))
+
+        let development = try String(
+            contentsOf: output.appendingPathComponent("LicenseDevelopment.swift"), encoding: .utf8)
+        XCTAssertTrue(development.contains("#if DEBUG"))
+        XCTAssertTrue(development.contains("IndieLicense Testing"))
+        XCTAssertTrue(development.contains("INDIELICENSE_TEST_STATE"))
+        XCTAssertFalse(development.localizedCaseInsensitiveContains("appunbound"))
 
         let allGenerated = try names.map {
             try String(contentsOf: output.appendingPathComponent($0), encoding: .utf8)
@@ -620,6 +627,107 @@ final class CLITests: FixedKeyTestCase {
             atPath: output.appendingPathComponent("LicenseManager.swift").path))
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: output.appendingPathComponent("LicenseActivationView.swift").path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: output.appendingPathComponent("LicenseDevelopment.swift").path))
+    }
+
+    func testGeneratedDevelopmentHarnessRunsEveryStateAndReleaseOmitsIt() throws {
+        let output = tempDir.appendingPathComponent("CompiledHarness")
+        try runIntegrate(output: output, trial: "7d", publicKey: publicKeyBase64)
+
+        let check = output.appendingPathComponent("DevelopmentHarnessCheck.swift")
+        try """
+        import Foundation
+
+        @main
+        struct DevelopmentHarnessCheck {
+            @MainActor
+            static func main() {
+                precondition(IndieLicenseDevelopmentScenario.requested(
+                    arguments: ["App"], environment: [:]) == nil)
+                precondition(IndieLicenseDevelopmentScenario.requested(
+                    arguments: ["App", "--indielicense-state=trial-expired"],
+                    environment: [:]) == .trialExpired)
+                precondition(IndieLicenseDevelopmentScenario.requested(
+                    arguments: ["App"],
+                    environment: ["INDIELICENSE_TEST_STATE": "storage-failure"]
+                ) == .storageFailure)
+
+                let manager = LicenseManager()
+                precondition(manager.developmentScenario == .fullAccess)
+                precondition(manager.isLicensed && manager.hasFullAccess)
+
+                manager.setDevelopmentScenario(.trial)
+                guard case .trial(let days, _) = manager.state, days == 7 else {
+                    fatalError("active trial scenario failed")
+                }
+                manager.setDevelopmentScenario(.trialEndingToday)
+                guard case .trial(let days, _) = manager.state, days == 0 else {
+                    fatalError("final trial day scenario failed")
+                }
+                manager.setDevelopmentScenario(.trialExpired)
+                guard case .trialExpired = manager.state else { fatalError("expired trial failed") }
+                manager.setDevelopmentScenario(.unlicensed)
+                guard case .unlicensed = manager.state else { fatalError("unlicensed failed") }
+                manager.setDevelopmentScenario(.renewalRequired)
+                guard case .renewalRequired = manager.state else { fatalError("renewal failed") }
+                manager.setDevelopmentScenario(.invalidLicense)
+                guard case .invalid(.badSignature) = manager.state else { fatalError("invalid failed") }
+                manager.setDevelopmentScenario(.storageFailure)
+                guard case .storageFailure = manager.state else { fatalError("storage failed") }
+
+                precondition(manager.activate(key: "simulated-key"))
+                precondition(manager.developmentScenario == .fullAccess)
+                precondition(manager.isLicensed)
+            }
+        }
+        """.write(to: check, atomically: true, encoding: .utf8)
+
+        let swiftFiles = try FileManager.default.contentsOfDirectory(
+            at: output, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+            .map(\.path)
+            .sorted()
+        let debugExecutable = tempDir.appendingPathComponent("development-harness-check")
+        try runProcess(
+            "/usr/bin/xcrun",
+            arguments: ["swiftc", "-DDEBUG", "-parse-as-library"]
+                + swiftFiles + ["-o", debugExecutable.path])
+        try runProcess(debugExecutable.path, arguments: [])
+
+        let releaseLibrary = tempDir.appendingPathComponent("libGeneratedLicense.dylib")
+        try runProcess(
+            "/usr/bin/xcrun",
+            arguments: ["swiftc", "-O", "-parse-as-library", "-emit-library"]
+                + swiftFiles.filter { !$0.hasSuffix("/DevelopmentHarnessCheck.swift") }
+                + ["-o", releaseLibrary.path])
+        let releaseStrings = try runProcess(
+            "/usr/bin/strings", arguments: [releaseLibrary.path])
+        XCTAssertFalse(releaseStrings.contains("IndieLicense Testing"))
+        XCTAssertFalse(releaseStrings.contains("INDIELICENSE_TEST_STATE"))
+        XCTAssertFalse(releaseStrings.contains("trial-ending-today"))
+    }
+
+    @discardableResult
+    private func runProcess(_ executable: String, arguments: [String]) throws -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let text = String(
+            decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            XCTFail("\(executable) \(arguments) failed (\(process.terminationStatus)):\n\(text)")
+            throw NSError(
+                domain: "IndieLicenseGeneratedHarnessTests",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: text])
+        }
+        return text
     }
 
     func testIntegrateRefusesOverwriteBeforeWritingAnything() throws {
@@ -741,6 +849,7 @@ final class SingleFileSyncTests: XCTestCase {
             (EmbeddedTemplates.verifier, "Verifier/LicenseVerifier.swift"),
             (EmbeddedTemplates.licenseConfig, "Templates/Swift/LicenseConfig.swift.template"),
             (EmbeddedTemplates.licenseManager, "Templates/Swift/LicenseManager.swift.template"),
+            (EmbeddedTemplates.licenseDevelopment, "Templates/Swift/LicenseDevelopment.swift.template"),
             (EmbeddedTemplates.activationView, "Templates/Swift/LicenseActivationView.swift.template"),
             (EmbeddedTemplates.badgeView, "Templates/Swift/LicenseBadgeView.swift.template"),
             (EmbeddedTemplates.gateView, "Templates/Swift/LicenseGateView.swift.template"),
