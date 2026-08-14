@@ -76,6 +76,8 @@ The output contains:
   optional keyless trial length, optional purchase URL;
 - `LicenseManager.swift` — launch validation, secure persistence, app state,
   keyless-trial tracking;
+- `LicenseDevelopment.swift` — automatic Debug-only full access and native
+  license-state testing menu; compiled out of Release builds;
 - optional `LicenseActivationView.swift` — neutral key entry with an optional
   "Buy a license" link;
 - optional `LicenseBadgeView.swift` — drop-in trial/unlock/renew status badge
@@ -88,6 +90,14 @@ The output contains:
 keyless trial), and explicit unlicensed, trial, trial-expired, renewal,
 invalid, and storage-failure states. The app still owns feature policy,
 checkout, pricing, UI copy, and localization.
+
+Debug builds start with simulated full access, so a developer's real trial
+never blocks normal work. The automatically installed **IndieLicense Testing**
+menu switches the running app between all customer-facing
+license states or the real persisted state. This uses only `#if DEBUG` and
+AppKit—it does not depend on AppUnbound or any other development tool. Release
+builds contain none of the harness. UI tests may select a state with
+`--indielicense-state trial-expired` or `INDIELICENSE_TEST_STATE=trial-expired`.
 
 ## Manual integration
 

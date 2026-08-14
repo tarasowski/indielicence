@@ -1,0 +1,196 @@
+#if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
+import AppKit
+import Foundation
+
+/// In-memory license states for development and UI automation. This entire
+/// file is omitted by the Swift compiler unless `DEBUG` is defined.
+enum IndieLicenseDevelopmentScenario: String, CaseIterable, Identifiable {
+    case fullAccess = "full-access"
+    case trial = "trial"
+    case trialEndingToday = "trial-ending-today"
+    case trialExpired = "trial-expired"
+    case unlicensed = "unlicensed"
+    case renewalRequired = "renewal-required"
+    case invalidLicense = "invalid-license"
+    case storageFailure = "storage-failure"
+    case real = "real"
+
+    static let environmentKey = "INDIELICENSE_TEST_STATE"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .fullAccess: "Full Access"
+        case .trial: "Trial — 7 Days Left"
+        case .trialEndingToday: "Trial — Ends Today"
+        case .trialExpired: "Trial Ended"
+        case .unlicensed: "Not Licensed"
+        case .renewalRequired: "Renewal Required"
+        case .invalidLicense: "Invalid License"
+        case .storageFailure: "Storage Unavailable"
+        case .real: "Real Persisted State"
+        }
+    }
+
+    static func requested(
+        arguments: [String] = ProcessInfo.processInfo.arguments,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Self? {
+        if let argument = arguments.first(where: { $0.hasPrefix("--indielicense-state=") }),
+           let value = argument.split(separator: "=", maxSplits: 1).last,
+           let scenario = Self(rawValue: String(value)) {
+            return scenario
+        }
+
+        if let index = arguments.firstIndex(of: "--indielicense-state"),
+           arguments.indices.contains(index + 1),
+           let scenario = Self(rawValue: arguments[index + 1]) {
+            return scenario
+        }
+
+        return environment[environmentKey].flatMap(Self.init(rawValue:))
+    }
+
+    func state(now: Date = Date()) -> AppLicenseState? {
+        let today = indieLicenseDevelopmentDate(
+            ofUnixDay: indieLicenseDevelopmentUnixDay(of: now))
+        switch self {
+        case .fullAccess:
+            return .licensed(LicenseInfo(
+                product: LicenseConfig.product,
+                keyID: 0,
+                issuedAt: today,
+                expiresDurationDays: nil,
+                updatesDurationDays: nil,
+                isLifetime: true,
+                effectiveExpiresAt: nil,
+                effectiveUpdatesUntil: nil,
+                denylistSequence: nil))
+        case .trial:
+            return .trial(
+                daysRemaining: 7,
+                expiresOn: today.addingTimeInterval(7 * 86_400))
+        case .trialEndingToday:
+            return .trial(daysRemaining: 0, expiresOn: today)
+        case .trialExpired:
+            return .trialExpired(on: today.addingTimeInterval(-86_400))
+        case .unlicensed:
+            return .unlicensed
+        case .renewalRequired:
+            return .renewalRequired(until: today.addingTimeInterval(-86_400))
+        case .invalidLicense:
+            return .invalid(.badSignature)
+        case .storageFailure:
+            return .storageFailure
+        case .real:
+            return nil
+        }
+    }
+}
+
+/// Installs a native development menu without requiring changes to the host
+/// app's SwiftUI `commands`. AppKit is used deliberately so this works for
+/// SwiftUI, AppKit, and mixed macOS applications alike.
+@MainActor
+final class IndieLicenseDevelopmentMenu: NSObject {
+    static let shared = IndieLicenseDevelopmentMenu()
+
+    private static let topLevelTag = 0x494C_1000
+    private static let scenarioTagBase = 0x494C_1100
+
+    private weak var manager: LicenseManager?
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var installationTask: Task<Void, Never>?
+
+    private override init() {}
+
+    func install(for manager: LicenseManager) {
+        self.manager = manager
+        if lifecycleObservers.isEmpty {
+            for name in [
+                NSApplication.didFinishLaunchingNotification,
+                NSApplication.didBecomeActiveNotification,
+            ] {
+                lifecycleObservers.append(NotificationCenter.default.addObserver(
+                    forName: name,
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    Task { @MainActor in
+                        IndieLicenseDevelopmentMenu.shared.scheduleInstallation()
+                    }
+                })
+            }
+        }
+        scheduleInstallation()
+    }
+
+    func updateSelection() {
+        _ = installOrUpdateMenu()
+    }
+
+    private func scheduleInstallation() {
+        installationTask?.cancel()
+        installationTask = Task { @MainActor [weak self] in
+            let clock = ContinuousClock()
+            let delays: [Duration] = [.zero, .milliseconds(50), .milliseconds(250), .seconds(1)]
+            for delay in delays {
+                if delay != .zero {
+                    do { try await clock.sleep(for: delay) }
+                    catch { return }
+                }
+                guard !Task.isCancelled else { return }
+                _ = self?.installOrUpdateMenu()
+            }
+        }
+    }
+
+    @discardableResult
+    private func installOrUpdateMenu() -> Bool {
+        guard let app = NSApp, let mainMenu = app.mainMenu, let manager else { return false }
+
+        let menu: NSMenu
+        if let existing = mainMenu.items.first(where: { $0.tag == Self.topLevelTag }),
+           let existingMenu = existing.submenu {
+            menu = existingMenu
+            menu.removeAllItems()
+        } else {
+            let topLevelItem = NSMenuItem()
+            topLevelItem.tag = Self.topLevelTag
+            topLevelItem.title = "IndieLicense Testing"
+            menu = NSMenu(title: topLevelItem.title)
+            topLevelItem.submenu = menu
+            mainMenu.addItem(topLevelItem)
+        }
+
+        for (index, scenario) in IndieLicenseDevelopmentScenario.allCases.enumerated() {
+            if scenario == .real { menu.addItem(.separator()) }
+            let item = NSMenuItem(
+                title: scenario.title,
+                action: #selector(selectScenario(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.tag = Self.scenarioTagBase + index
+            item.representedObject = scenario.rawValue
+            item.state = manager.developmentScenario == scenario ? .on : .off
+            menu.addItem(item)
+        }
+        return true
+    }
+
+    @objc private func selectScenario(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let scenario = IndieLicenseDevelopmentScenario(rawValue: rawValue) else { return }
+        manager?.setDevelopmentScenario(scenario)
+    }
+}
+
+private func indieLicenseDevelopmentUnixDay(of date: Date) -> Int {
+    Int(floor(date.timeIntervalSince1970 / 86_400))
+}
+
+private func indieLicenseDevelopmentDate(ofUnixDay day: Int) -> Date {
+    Date(timeIntervalSince1970: Double(day) * 86_400)
+}
+#endif

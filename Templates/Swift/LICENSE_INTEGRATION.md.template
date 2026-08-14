@@ -13,6 +13,7 @@ Generated configuration:
 - Trial policy: {{TRIAL_POLICY_DESCRIPTION}}
 - Purchase link: {{PURCHASE_DESCRIPTION}}
 - SwiftUI activation view: {{UI_DESCRIPTION}}
+- Development state harness: included in Debug builds, absent from Release
 
 ## Wire it into the app
 
@@ -63,3 +64,23 @@ can reset it, just as they could request another trial key.
 
 The private signing key and key-id state must remain outside the app repository.
 Only the public key in `LicenseConfig.swift` belongs in the shipped app.
+
+## Develop without resetting trials
+
+Debug builds start with simulated full access and automatically add an
+**IndieLicense Testing** menu with license-state choices. Use it to inspect an active
+trial, the final trial day, an ended trial, unlicensed, renewal, invalid-key,
+storage-failure, and real persisted states. Simulated states live only in
+memory and never read, write, or reset the real license store.
+
+UI automation can select its initial state with
+`--indielicense-state trial-expired` or the `INDIELICENSE_TEST_STATE`
+environment value. Supported values are `full-access`, `trial`,
+`trial-ending-today`, `trial-expired`, `unlicensed`, `renewal-required`,
+`invalid-license`, `storage-failure`, and `real`.
+
+The harness uses only the standard Swift `DEBUG` compilation condition and
+AppKit; it has no dependency on AppUnbound, Xcode launch schemes, or another
+development tool. Define `INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS` as an
+additional Swift compilation condition to opt a Debug configuration out.
+Release builds do not contain the scenario code, parser, or menu.

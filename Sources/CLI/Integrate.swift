@@ -27,7 +27,8 @@ struct Integrate: ParsableCommand {
         discussion: """
         The generated files are ordinary source code: the standalone verifier,
         public configuration, persistence/validation plumbing, an optional
-        neutral SwiftUI key-entry view, and a short integration checklist.
+        neutral SwiftUI key-entry view, a Debug-only license-state harness,
+        and a short integration checklist.
 
         Existing files are never overwritten. Private key material is never
         copied, printed, or written to the application.
@@ -114,6 +115,7 @@ struct Integrate: ParsableCommand {
                     "HARD_GATE": trialPolicy == .hard ? "true" : "false",
                 ])),
             ("LicenseManager.swift", EmbeddedTemplates.licenseManager),
+            ("LicenseDevelopment.swift", EmbeddedTemplates.licenseDevelopment),
         ]
         if ui == .swiftui {
             files.append(("LicenseActivationView.swift", EmbeddedTemplates.activationView))
@@ -146,6 +148,7 @@ struct Integrate: ParsableCommand {
 
         print("Generated Swift licensing plumbing for '\(resolvedProduct)' in \(outputURL.path)")
         print("Add the .swift files to the app target, then follow LICENSE_INTEGRATION.md.")
+        print("Debug builds start with full access and include the IndieLicense Testing menu.")
         if ui == .swiftui && purchase == nil {
             print("Tip: pass --purchase-url <https-link> to show a 'Buy a license' button,")
             print("or set LicenseConfig.purchaseURL later in the generated code.")
