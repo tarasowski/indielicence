@@ -195,24 +195,33 @@ struct Integrate: ParsableCommand {
             // networking code.
             let feedbackState = endpoint != nil
                 ? "    @State private var showingFeedback = false" : ""
+            let feedbackPresent = endpoint != nil
+                ? "true" : "license.feedbackLink() != nil"
             let feedbackAction = endpoint != nil ? """
-                        Button("Request a feature") { showingFeedback = true }
-                            .buttonStyle(.link)
-                            .font(.callout)
+                            Button { showingFeedback = true } label: {
+                                actionRow(icon: "bubble.left", title: "Request a feature")
+                            }
+                            .buttonStyle(.plain)
                             .sheet(isPresented: $showingFeedback) {
                                 LicenseFeedbackView(license: license)
                             }
             """ : """
-                        if let feedback = license.feedbackLink() {
-                            // Opened in the browser or mail client only; the app itself
-                            // never performs a network request in these modes.
-                            Link("Request a feature", destination: feedback)
-                                .font(.callout)
-                        }
+                            if let feedback = license.feedbackLink() {
+                                // Opened in the browser or mail client only; the app itself
+                                // never performs a network request in these modes.
+                                Link(destination: feedback) {
+                                    actionRow(icon: "bubble.left", title: "Request a feature")
+                                }
+                                .buttonStyle(.plain)
+                            }
             """
             files.append(("LicenseActivationView.swift", try render(
                 EmbeddedTemplates.activationView,
-                values: ["FEEDBACK_STATE": feedbackState, "FEEDBACK_ACTION": feedbackAction])))
+                values: [
+                    "FEEDBACK_STATE": feedbackState,
+                    "FEEDBACK_ACTION": feedbackAction,
+                    "FEEDBACK_PRESENT": feedbackPresent,
+                ])))
             files.append(("LicenseBadgeView.swift", EmbeddedTemplates.badgeView))
             files.append(("LicenseGateView.swift", EmbeddedTemplates.gateView))
             if endpoint != nil {
@@ -251,7 +260,9 @@ struct Integrate: ParsableCommand {
 
         print("Generated Swift licensing plumbing for '\(resolvedProduct)' in \(outputURL.path)")
         print("Add the .swift files to the app target, then follow LICENSE_INTEGRATION.md.")
-        print("Debug builds start with full access and include the IndieLicense Testing menu.")
+        print(distribution == .freemium
+            ? "Debug builds start in the free tier and include the IndieLicense Testing menu."
+            : "Debug builds start with full access and include the IndieLicense Testing menu.")
         if distribution == .freemium {
             print("Freemium: the core app must stay fully usable with no key. Gate only Pro features, with license.isPro.")
         }

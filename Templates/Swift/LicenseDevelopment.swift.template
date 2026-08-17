@@ -4,14 +4,39 @@ import Foundation
 
 /// In-memory license states for development and UI automation. This entire
 /// file is omitted by the Swift compiler unless `DEBUG` is defined.
+///
+/// The cases are deterministic *presets*: each one pins the complete
+/// simulated world — the license state, fixed days-left numbers, and (for
+/// freemium presets) whether the Pro tier is on sale. `relevantCases`
+/// derives the menu from `LicenseConfig`, so every app's menu lists exactly
+/// the situations that can occur for its distribution model and nothing
+/// impossible is representable.
 enum IndieLicenseDevelopmentScenario: String, CaseIterable, Identifiable {
+    // Freemium presets (distribution = freemium).
+    case freemiumFree = "freemium-free"
+    case freemiumFreeKeyActive = "freemium-free-key-active"
+    case freemiumProNotActive = "freemium-pro-not-active"
+    case freemiumProLifetime = "freemium-pro-lifetime"
+    case freemiumProUpdates = "freemium-pro-updates"
+    case freemiumProUpdatesExpireSoon = "freemium-pro-updates-expire-soon"
+    case freemiumProUpdatesLapsed = "freemium-pro-updates-lapsed"
+    case freemiumProTrial = "freemium-pro-trial"
+    case freemiumProTrialLastDay = "freemium-pro-trial-last-day"
+    case freemiumProTrialExpired = "freemium-pro-trial-expired"
+    // Paid presets (distribution = paid).
     case fullAccess = "full-access"
+    case licensedUpdates = "licensed-updates"
+    case licensedUpdatesExpireSoon = "licensed-updates-expire-soon"
+    case renewalRequired = "renewal-required"
     case trial = "trial"
     case trialEndingToday = "trial-ending-today"
     case trialExpired = "trial-expired"
     case unlicensed = "unlicensed"
-    case renewalRequired = "renewal-required"
+    case licensedTrialKey = "trial-key"
+    case trialKeyExpired = "trial-key-expired"
+    // Shared problem states and reality.
     case invalidLicense = "invalid-license"
+    case keyRevoked = "key-revoked"
     case storageFailure = "storage-failure"
     case real = "real"
 
@@ -19,17 +44,112 @@ enum IndieLicenseDevelopmentScenario: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
+    /// Pinned simulation numbers, mirroring the app's configuration where one
+    /// exists so menu names match reality: the keyless trial length (7 when
+    /// none is configured), the trial-key length (documented 14-day default),
+    /// the common one-year update window, and the expiring-soon warning
+    /// window. Fixed values, never wall-clock drift — screenshots and UI
+    /// tests reproduce.
+    static var simulatedTrialDays: Int { LicenseConfig.trialDays ?? 7 }
+    static var simulatedTrialKeyDays: Int { LicenseConfig.trialDays ?? 14 }
+    static let simulatedUpdatesDays = 365
+    static let simulatedExpireSoonDays = 7
+
+    /// The presets that can actually occur for this app, in menu order,
+    /// derived from `LicenseConfig`: freemium apps get the freemium presets,
+    /// paid apps with a keyless trial get the trial presets, paid apps
+    /// without one get "Not Purchased" instead. Problem states and the real
+    /// persisted state apply everywhere. Cases outside this list remain
+    /// selectable via launch arguments for cross-model UI tests.
+    static var relevantCases: [Self] {
+        var cases: [Self]
+        if LicenseConfig.freemium {
+            cases = [.freemiumFree, .freemiumFreeKeyActive, .freemiumProNotActive,
+                     .freemiumProLifetime, .freemiumProUpdates,
+                     .freemiumProUpdatesExpireSoon, .freemiumProUpdatesLapsed,
+                     .freemiumProTrial, .freemiumProTrialLastDay,
+                     .freemiumProTrialExpired]
+        } else if LicenseConfig.trialDays != nil {
+            cases = [.trial, .trialEndingToday, .trialExpired,
+                     .fullAccess, .licensedUpdates, .licensedUpdatesExpireSoon,
+                     .renewalRequired, .licensedTrialKey, .trialKeyExpired]
+        } else {
+            cases = [.unlicensed,
+                     .fullAccess, .licensedUpdates, .licensedUpdatesExpireSoon,
+                     .renewalRequired, .licensedTrialKey, .trialKeyExpired]
+        }
+        cases += [.invalidLicense, .keyRevoked, .storageFailure, .real]
+        return cases
+    }
+
+    /// Freemium presets simulate the product phase too: whether the Pro tier
+    /// is on sale. nil = not simulated (paid presets, or the real scenario) —
+    /// the app should fall back to its own shipped-features flag.
+    var simulatesProOnSale: Bool? {
         switch self {
-        case .fullAccess: "Full Access"
-        case .trial: "Trial — 7 Days Left"
-        case .trialEndingToday: "Trial — Ends Today"
-        case .trialExpired: "Trial Ended"
-        case .unlicensed: LicenseConfig.freemium ? "Free Tier" : "Not Licensed"
-        case .renewalRequired: "Renewal Required"
-        case .invalidLicense: "Invalid License"
-        case .storageFailure: "Storage Unavailable"
-        case .real: "Real Persisted State"
+        case .freemiumFree, .freemiumFreeKeyActive:
+            return false
+        case .freemiumProNotActive, .freemiumProLifetime, .freemiumProUpdates,
+             .freemiumProUpdatesExpireSoon, .freemiumProUpdatesLapsed,
+             .freemiumProTrial, .freemiumProTrialLastDay, .freemiumProTrialExpired:
+            return true
+        default:
+            return nil
+        }
+    }
+
+    var title: String {
+        let trialKeyDays = Self.simulatedTrialKeyDays
+        let trialKeySuffix = "\(trialKeyDays) Day\(trialKeyDays == 1 ? "" : "s") Left"
+        switch self {
+        case .freemiumFree:
+            return "Freemium — No Pro"
+        case .freemiumFreeKeyActive:
+            return "Freemium — No Pro, Key Active"
+        case .freemiumProNotActive:
+            return "Freemium — Pro Not Active"
+        case .freemiumProLifetime:
+            return "Freemium — Pro Active (Lifetime)"
+        case .freemiumProUpdates:
+            return "Freemium — Pro Active (1 Year of Updates)"
+        case .freemiumProUpdatesExpireSoon:
+            return "Freemium — Pro Updates Expire in \(Self.simulatedExpireSoonDays) Days"
+        case .freemiumProUpdatesLapsed:
+            return "Freemium — Pro, Updates Lapsed"
+        case .freemiumProTrial:
+            return "Freemium — Pro Trial, \(trialKeySuffix)"
+        case .freemiumProTrialLastDay:
+            return "Freemium — Pro Trial, Last Day"
+        case .freemiumProTrialExpired:
+            return "Freemium — Pro Trial Expired"
+        case .fullAccess:
+            return "Licensed — Lifetime Key"
+        case .licensedUpdates:
+            return "Licensed — 1 Year of Updates"
+        case .licensedUpdatesExpireSoon:
+            return "Licensed — Updates Expire in \(Self.simulatedExpireSoonDays) Days"
+        case .renewalRequired:
+            return "Licensed — Updates Lapsed"
+        case .trial:
+            return "Trial — \(Self.simulatedTrialDays) Day\(Self.simulatedTrialDays == 1 ? "" : "s") Left"
+        case .trialEndingToday:
+            return "Trial — Last Day"
+        case .trialExpired:
+            return LicenseConfig.hardGate ? "Trial Expired — Locked" : "Trial Expired — Limited"
+        case .unlicensed:
+            return LicenseConfig.hardGate ? "Not Purchased — Locked" : "Not Purchased — Limited"
+        case .licensedTrialKey:
+            return "Vendor Trial Key — \(trialKeySuffix)"
+        case .trialKeyExpired:
+            return "Vendor Trial Key — Expired"
+        case .invalidLicense:
+            return "Key Problem — Invalid"
+        case .keyRevoked:
+            return "Key Problem — Revoked"
+        case .storageFailure:
+            return "Key Problem — Storage Unavailable"
+        case .real:
+            return "Real Persisted State"
         }
     }
 
@@ -55,9 +175,9 @@ enum IndieLicenseDevelopmentScenario: String, CaseIterable, Identifiable {
     func state(now: Date = Date()) -> AppLicenseState? {
         let today = indieLicenseDevelopmentDate(
             ofUnixDay: indieLicenseDevelopmentUnixDay(of: now))
-        switch self {
-        case .fullAccess:
-            return .licensed(LicenseInfo(
+
+        func lifetimeKey() -> AppLicenseState {
+            .licensed(LicenseInfo(
                 product: LicenseConfig.product,
                 keyID: 0,
                 issuedAt: today,
@@ -67,22 +187,63 @@ enum IndieLicenseDevelopmentScenario: String, CaseIterable, Identifiable {
                 effectiveExpiresAt: nil,
                 effectiveUpdatesUntil: nil,
                 denylistSequence: nil))
+        }
+        func updatesKey(untilDays: Int) -> AppLicenseState {
+            .licensed(LicenseInfo(
+                product: LicenseConfig.product,
+                keyID: 0,
+                issuedAt: today,
+                expiresDurationDays: nil,
+                updatesDurationDays: UInt16(clamping: Self.simulatedUpdatesDays),
+                isLifetime: false,
+                effectiveExpiresAt: nil,
+                effectiveUpdatesUntil: today.addingTimeInterval(Double(untilDays) * 86_400),
+                denylistSequence: nil))
+        }
+        func expiringKey(daysLeft: Int) -> AppLicenseState {
+            .licensed(LicenseInfo(
+                product: LicenseConfig.product,
+                keyID: 0,
+                issuedAt: today,
+                expiresDurationDays: UInt16(clamping: max(daysLeft, 1)),
+                updatesDurationDays: nil,
+                isLifetime: false,
+                effectiveExpiresAt: today.addingTimeInterval(Double(daysLeft) * 86_400),
+                effectiveUpdatesUntil: nil,
+                denylistSequence: nil))
+        }
+
+        switch self {
+        case .freemiumFree, .freemiumProNotActive:
+            return .free
+        case .freemiumFreeKeyActive, .freemiumProUpdates, .licensedUpdates:
+            return updatesKey(untilDays: Self.simulatedUpdatesDays)
+        case .freemiumProUpdatesExpireSoon, .licensedUpdatesExpireSoon:
+            return updatesKey(untilDays: Self.simulatedExpireSoonDays)
+        case .freemiumProLifetime, .fullAccess:
+            return lifetimeKey()
+        case .freemiumProUpdatesLapsed, .renewalRequired:
+            return .renewalRequired(until: today.addingTimeInterval(-86_400))
+        case .freemiumProTrial, .licensedTrialKey:
+            return expiringKey(daysLeft: Self.simulatedTrialKeyDays)
+        case .freemiumProTrialLastDay:
+            return expiringKey(daysLeft: 0)
+        case .freemiumProTrialExpired, .trialKeyExpired:
+            return .invalid(.expired(on: today.addingTimeInterval(-86_400)))
         case .trial:
             return .trial(
-                daysRemaining: 7,
-                expiresOn: today.addingTimeInterval(7 * 86_400))
+                daysRemaining: Self.simulatedTrialDays,
+                expiresOn: today.addingTimeInterval(Double(Self.simulatedTrialDays) * 86_400))
         case .trialEndingToday:
             return .trial(daysRemaining: 0, expiresOn: today)
         case .trialExpired:
             return .trialExpired(on: today.addingTimeInterval(-86_400))
         case .unlicensed:
-            // Freemium builds never show .unlicensed; simulate their real
-            // keyless state instead so the harness matches production.
-            return LicenseConfig.freemium ? .free : .unlicensed
-        case .renewalRequired:
-            return .renewalRequired(until: today.addingTimeInterval(-86_400))
+            return .unlicensed
         case .invalidLicense:
             return .invalid(.badSignature)
+        case .keyRevoked:
+            return .invalid(.revoked(note: "refunded"))
         case .storageFailure:
             return .storageFailure
         case .real:
@@ -166,8 +327,8 @@ final class IndieLicenseDevelopmentMenu: NSObject {
             mainMenu.addItem(topLevelItem)
         }
 
-        for (index, scenario) in IndieLicenseDevelopmentScenario.allCases.enumerated() {
-            if scenario == .real { menu.addItem(.separator()) }
+        for (index, scenario) in IndieLicenseDevelopmentScenario.relevantCases.enumerated() {
+            if scenario == .invalidLicense || scenario == .real { menu.addItem(.separator()) }
             let item = NSMenuItem(
                 title: scenario.title,
                 action: #selector(selectScenario(_:)),

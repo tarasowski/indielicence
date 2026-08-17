@@ -92,7 +92,8 @@ Only the public key in `LicenseConfig.swift` belongs in the shipped app.
 
 ## Develop without resetting trials
 
-Debug builds start with simulated full access and automatically add an
+Debug builds start with simulated full access (freemium: the free tier, the
+state real users see) and automatically add an
 **IndieLicense Testing** menu with license-state choices. Use it to inspect an active
 trial, the final trial day, an ended trial, unlicensed, renewal, invalid-key,
 storage-failure, and real persisted states. Simulated states live only in
@@ -100,9 +101,18 @@ memory and never read, write, or reset the real license store.
 
 UI automation can select its initial state with
 `--indielicense-state trial-expired` or the `INDIELICENSE_TEST_STATE`
-environment value. Supported values are `full-access`, `trial`,
-`trial-ending-today`, `trial-expired`, `unlicensed`, `renewal-required`,
-`invalid-license`, `storage-failure`, and `real`.
+environment value. Every preset raw value is accepted regardless of the
+app's own model (useful for cross-model UI tests): freemium presets
+`freemium-free`, `freemium-free-key-active`, `freemium-pro-not-active`,
+`freemium-pro-lifetime`, `freemium-pro-updates`,
+`freemium-pro-updates-expire-soon`, `freemium-pro-updates-lapsed`,
+`freemium-pro-trial`, `freemium-pro-trial-last-day`,
+`freemium-pro-trial-expired`; paid presets `full-access`, `licensed-updates`,
+`licensed-updates-expire-soon`, `renewal-required`, `trial`,
+`trial-ending-today`, `trial-expired`, `unlicensed`, `trial-key`,
+`trial-key-expired`; shared `invalid-license`, `key-revoked`,
+`storage-failure`, and `real`. Freemium presets also report
+`simulatesProOnSale` so the app can preview its Pro-on-sale phase.
 
 The harness uses only the standard Swift `DEBUG` compilation condition and
 AppKit; it has no dependency on AppUnbound, Xcode launch schemes, or another

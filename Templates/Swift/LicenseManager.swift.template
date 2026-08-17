@@ -45,7 +45,11 @@ final class LicenseManager: ObservableObject {
 
     init() {
 #if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
-        developmentScenario = IndieLicenseDevelopmentScenario.requested() ?? .fullAccess
+        // Paid apps default to a simulated lifetime key so a developer's real
+        // trial never blocks work. Freemium apps are never blocked, so they
+        // default to the free preset — the state real users actually see.
+        developmentScenario = IndieLicenseDevelopmentScenario.requested()
+            ?? (LicenseConfig.freemium ? .freemiumFree : .fullAccess)
 #endif
         refresh()
 #if DEBUG && !INDIELICENSE_DISABLE_DEVELOPMENT_HARNESS
@@ -95,7 +99,7 @@ final class LicenseManager: ObservableObject {
         // Simulated states must never persist a real or fake key. Treat a
         // non-empty entry as a successful simulated activation instead.
         if developmentScenario != .real {
-            setDevelopmentScenario(.fullAccess)
+            setDevelopmentScenario(LicenseConfig.freemium ? .freemiumProLifetime : .fullAccess)
             return true
         }
 #endif
