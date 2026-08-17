@@ -16,17 +16,21 @@ Read IndieLicense's AI_INTEGRATION.md, AGENTS.md, README.md, and SPEC.md before
 changing code, then follow the integration playbook exactly.
 
 Product id: PRODUCT_ID
+Distribution: paid | freemium   (freemium: the core app is free forever, a license key unlocks Pro features)
 License mode: lifetime | updates | trial
 Public key: BASE64_PUBLIC_KEY_FROM_INDIELICENSE_INIT
-Keyless trial: none | 7d | 14d | ...   (built-in try-before-buy, no key needed)
-Trial policy: soft | hard   (soft: features degrade; hard: app locks until a key is entered)
-Purchase URL: none | https://YOUR_CHECKOUT_PAGE   (shown as a "Buy a license" button)
+Keyless trial: none | 7d | 14d | ...   (built-in try-before-buy, no key needed; paid distribution only)
+Trial policy: soft | hard   (soft: features degrade; hard: app locks until a key is entered; paid only)
+Purchase URL: none | https://YOUR_CHECKOUT_PAGE   (shown as a "Buy a license" / "Upgrade to Pro" button)
+Feedback: none | https://YOUR_FEEDBACK_PAGE | you@example.com   (adds a "Request a feature" link, pre-tagged with tier and version — a URL opens the browser, an email opens the mail client; never fetched by the app)
 
 Inspect this app to select the Swift or JavaScript verifier. Add a license-entry
 flow, secure persistence, validation on every launch, an immutable release build
 date, correct UI for every validation result, and tests. When a keyless trial is
 requested, gate paid features with hasFullAccess and surface the generated
-LicenseBadgeView (trial days remaining / unlock / renew). Do not add a licensing
+LicenseBadgeView (trial days remaining / unlock / renew). With freemium
+distribution, never gate the core app: it stays fully usable forever with no
+key; gate only Pro features, with license.isPro. Do not add a licensing
 server, network calls, telemetry, or analytics. Never access or modify .private
 or .state files and never commit generated customer keys.
 
@@ -54,12 +58,14 @@ licensing model is a business decision, not a technical one.
 | # | Question to ask the user | Maps to | Notes / recommended default |
 |---|---|---|---|
 | 1 | What is the product id? | `--product` | lowercase `a-z0-9`, 1–64 chars; suggest one derived from the app name |
-| 2 | Which sales model for purchased keys: **lifetime** (pay once, everything forever), **updates** (pay once, keep forever, updates covered for a window — recommended), or **trial keys**? | `generate --mode` | `updates` is the common indie default |
+| 1b | Which **distribution model**: **paid** (a license is required, optionally after a trial) or **freemium** (the core app is free forever with no key; a purchased key unlocks the Pro tier)? | `integrate --distribution` | `paid`; choose `freemium` for free-first apps that will monetize later — integrating it from the first release lets Pro arrive in an update with no migration |
+| 2 | Which sales model for purchased keys: **lifetime** (pay once, everything forever), **updates** (pay once, keep forever, updates covered for a window — recommended), or **trial keys**? Freemium Pro keys are ordinary lifetime/updates keys. | `generate --mode` | `updates` is the common indie default |
 | 3 | If **updates**: how long should the update window be? Months are fine — convert to days (12 months → `365d`, 6 months → `180d`). | `--updates-duration` | `365d` |
 | 4 | If **trial keys**: how many days until the key expires after activation? | `--expires` | `14d`; remind the user these are for press/beta/manual grants |
 | 5 | Should the app have a **built-in keyless trial** (everyone can try it on first launch, no key needed)? If yes, how many days? | `integrate --trial` | `7d` or `14d`; independent of question 2 and composes with any key mode |
 | 5b | When full access ends (trial over, no key): **soft** (app keeps running, features degrade — e.g. a watermark) or **hard** (the whole app locks behind a non-dismissible key-entry screen)? | `integrate --trial-policy soft\|hard` | `soft`; `hard` requires `--ui swiftui` and wrapping the root view in `LicenseGateView` |
 | 6 | Where do customers **buy** a license — what is the checkout page URL? | `integrate --purchase-url` | must be `https://…`; shown as a "Buy a license" button, only ever opened in the browser. "None yet" is acceptable — the button is simply hidden |
+| 6b | Where should users **request features** — a feedback page URL (e.g. the app's store feedback page), or a plain email address for developers whose feedback lives in their inbox? | `integrate --feedback-url` or `--feedback-email` (choose one) | URL must be `https://…` and carries tier (free/pro/trial) + app version query items; an email becomes a mailto link with those pre-filled in the subject. Both only ever open the browser/mail client. Strongly recommended for freemium apps — the free phase is only worth it if it produces feedback. "None" hides the link |
 | 7 | Which **payment platform** delivers the keys (MakersDrop, Gumroad, Lemon Squeezy, Paddle, Stripe, other)? | CSV upload guidance only | affects the handoff instructions, not the code |
 | 8 | Use the generated neutral **SwiftUI UI** (key-entry sheet + status badge), or does the app have its own? | `integrate --ui swiftui\|none` | `swiftui` when the app has no licensing UI yet |
 | 9 | Will refunds/chargebacks need **revocation** (a signed denylist bundled with each release)? | `integrate --denylist bundled\|none`, later `revoke` | `none` to start is fine; can be added later |
@@ -78,8 +84,14 @@ Answer-mapping rules the agent must apply:
 - Keyless trial (question 5) and key mode (question 2) are independent axes:
   `--trial 7d` + lifetime keys, `--trial 14d` + updates keys, etc. are all
   valid combinations.
-- If the user declines the keyless trial, purchase URL, or denylist, generate
-  without those flags — every one of them is optional.
+- If the user declines the keyless trial, purchase URL, feedback URL, or
+  denylist, generate without those flags — every one of them is optional.
+- Freemium excludes the trial axes: `--distribution freemium` refuses `--trial`
+  (the free tier never expires) and `--trial-policy hard` (the free core never
+  locks). Questions 5 and 5b are skipped for freemium apps.
+- In freemium apps, gate Pro features with `license.isPro` and gate nothing
+  else. Features that shipped free must stay free in later releases; a new Pro
+  tier may only ever lock features that did not exist before.
 
 ## Required agent procedure
 
@@ -126,6 +138,19 @@ Choose one supported path:
   ```
   Select `--ui swiftui` only when a neutral price-free key-entry view is useful,
   and `--denylist bundled` only when the signed denylist will be an app resource.
+  Pass `--distribution freemium` for free-first apps: the generated
+  `LicenseManager` reports the permanent `free` state when no key is stored,
+  the app must gate only Pro features (with `license.isPro`), and the generated
+  UI reads "Unlock Pro" / "Upgrade to Pro" instead of activation/buy copy.
+  Freemium refuses `--trial` and `--trial-policy hard` by design.
+  Pass `--feedback-url https://...` to add a "Request a feature" link to the
+  generated activation sheet (and expose `license.feedbackLink()` for a Help
+  menu item): it opens the URL in the browser with tier and app-version query
+  items so submissions arrive pre-tagged — the app itself never performs a
+  network request. Developers who only mint keys with IndieLicense and collect
+  feedback themselves can pass `--feedback-email you@example.com` instead
+  (mutually exclusive): the link then opens the mail client with product,
+  version, and tier pre-filled in the subject.
   Add `--trial 7d` only when the user wants a keyless first-launch trial: the
   generated `LicenseManager` then stamps a trial start day once in the license file store
   and reports `.trial`/`.trialExpired` states for customers with no stored key.
@@ -187,7 +212,13 @@ The integration is incomplete until all of these exist:
    resource and preserve rollback protection across launches.
 8. Treat all license and denylist text as untrusted display data. Never render
    denylist notes as HTML.
-9. When a keyless trial is configured, gate paid features with
+9. With freemium distribution: the core app runs fully with no key, forever —
+   no nagging, no expiry, no lock screen. Gate exactly the Pro feature set with
+   `license.isPro`. The no-key state is `free`, and the UI must present it as a
+   valid tier, never as an error or an unlicensed condition. When a feedback
+   URL is configured, surface the "Request a feature" link (activation sheet
+   and/or a Help-menu item via `license.feedbackLink()`).
+10. When a keyless trial is configured, gate paid features with
    `license.hasFullAccess` (true while licensed **or** in trial) instead of
    `isLicensed`, place `LicenseBadgeView(license:)` somewhere always visible
    (toolbar or status area), and make sure the `.trialExpired` state leads the
@@ -207,6 +238,10 @@ Add target-app tests covering at least:
 - keyless-trial behavior when configured: full access inside the window,
   `trialExpired` after it, no restart on relaunch, and a real key ending the
   trial;
+- freemium behavior when configured: no stored key reports `free`, every core
+  feature works, nothing expires, and a valid key flips `isPro` immediately;
+- feedback-link behavior when configured: the composed URL carries the correct
+  tier and version query items and the app performs no network request;
 - hard-policy behavior when configured: the lock screen replaces the app when
   access ends, cannot be dismissed, and a valid key restores the app
   immediately;

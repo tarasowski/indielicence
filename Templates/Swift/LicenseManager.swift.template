@@ -4,6 +4,9 @@ import Foundation
 /// App-facing state derived from full offline validation.
 enum AppLicenseState: Equatable {
     case unlicensed
+    /// Freemium distribution only: no stored key, and that is a fully valid
+    /// state — the free core never expires and never locks.
+    case free
     case trial(daysRemaining: Int, expiresOn: Date)
     case trialExpired(on: Date)
     case licensed(LicenseInfo)
@@ -26,6 +29,10 @@ final class LicenseManager: ObservableObject {
         if case .licensed = state { return true }
         return false
     }
+
+    /// True when a purchased key unlocks the Pro tier. In freemium builds gate
+    /// Pro features with this; the free core needs no license checks at all.
+    var isPro: Bool { isLicensed }
 
     /// True while the customer may use paid features: licensed, or inside the
     /// keyless trial window when `LicenseConfig.trialDays` is set.
@@ -56,7 +63,7 @@ final class LicenseManager: ObservableObject {
 #endif
         do {
             guard let key = try LicenseStore.shared.load(), !key.isEmpty else {
-                state = keylessTrialState()
+                state = LicenseConfig.freemium ? .free : keylessTrialState()
                 return
             }
             apply(LicenseConfig.makeValidator().validate(key))
@@ -131,6 +138,40 @@ final class LicenseManager: ObservableObject {
         } catch {
             return .storageFailure
         }
+    }
+
+    /// Link for the "Request a feature" button, or nil when no feedback
+    /// destination is configured. A web destination gets the current tier
+    /// (free/pro/trial) and the app's short version appended as query items;
+    /// a mailto destination gets them pre-filled in the subject instead. The
+    /// link must only ever be handed to the system (browser or mail client) —
+    /// the app itself never performs a network request.
+    func feedbackLink() -> URL? {
+        guard let base = LicenseConfig.feedbackURL,
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        let version = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let tier: String
+        switch state {
+        case .licensed: tier = "pro"
+        case .trial: tier = "trial"
+        default: tier = "free"
+        }
+        if components.scheme == "mailto" {
+            let subject = "Feature request — \(LicenseConfig.product)"
+                + (version.isEmpty ? "" : " \(version)") + " (\(tier))"
+            components.queryItems = (components.queryItems ?? []) + [
+                URLQueryItem(name: "subject", value: subject),
+            ]
+        } else {
+            components.queryItems = (components.queryItems ?? []) + [
+                URLQueryItem(name: "mode", value: tier),
+                URLQueryItem(name: "version", value: version),
+            ]
+        }
+        return components.url
     }
 
     private func apply(_ result: LicenseValidationResult) {

@@ -130,6 +130,21 @@ script locally.
 
 - **Mint keys** in three modes: `lifetime`, `updates` (update window),
   `trial` (key expires N days after the customer's activation).
+- **Freemium distribution**: `integrate swift --distribution freemium` for
+  free-first apps — the core app is free forever with no key (permanent `free`
+  state, never nags or locks) and a purchased key flips `license.isPro` to
+  unlock the Pro tier. Pro keys are ordinary lifetime/updates keys; there is no
+  wire-format change. Refuses `--trial` and `--trial-policy hard` by design.
+  Integrate it from the app's first release so Pro can arrive in a later update
+  with no migration; features that shipped free must stay free.
+- **Feedback link** (optional, works with every distribution and key mode):
+  `--feedback-url https://…` adds a "Request a feature" link (and
+  `license.feedbackLink()`) carrying tier (free/pro/trial) and app version as
+  query items — opened in the browser only, never fetched. Alternatively
+  `--feedback-email you@example.com` (mutually exclusive) opens the mail
+  client with those pre-filled in the subject, for developers who only mint
+  keys here and collect feedback in their own inbox. Either way the app stays
+  fully offline.
 - **Keyless trial** (no key involved): `integrate swift --trial 7d` bakes a
   first-launch trial into the generated app code. Trial keys and the keyless
   trial are independent and compose: ship `--trial 7d` for onboarding, sell
@@ -156,7 +171,9 @@ script locally.
    ```sh
    indielicense integrate swift --product <id> --public-key <base64> \
        --build-date YYYY-MM-DD --output <app>/License --ui none --denylist none \
-       [--trial 7d] [--purchase-url <https-link>]
+       [--distribution paid|freemium] [--trial 7d] \
+       [--purchase-url <https-link>] \
+       [--feedback-url <https-link> | --feedback-email <address>]
    ```
    Use `--ui swiftui` only when its neutral UI fits; it also emits
    `LicenseBadgeView`, which the app can drop into a toolbar. Before

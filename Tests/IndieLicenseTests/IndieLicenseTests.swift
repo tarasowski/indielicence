@@ -358,7 +358,9 @@ final class CLITests: FixedKeyTestCase {
     func runIntegrate(
         output: URL, ui: String = "none", denylist: String = "none",
         trial: String? = nil, purchaseURL: String? = nil,
-        trialPolicy: String? = nil, publicKey: String? = nil
+        trialPolicy: String? = nil, distribution: String? = nil,
+        feedbackURL: String? = nil, feedbackEmail: String? = nil,
+        publicKey: String? = nil
     ) throws {
         var arguments = [
             "swift", "--product", "pixelpro", "--build-date", "2026-07-11",
@@ -372,6 +374,15 @@ final class CLITests: FixedKeyTestCase {
         }
         if let purchaseURL {
             arguments += ["--purchase-url", purchaseURL]
+        }
+        if let distribution {
+            arguments += ["--distribution", distribution]
+        }
+        if let feedbackURL {
+            arguments += ["--feedback-url", feedbackURL]
+        }
+        if let feedbackEmail {
+            arguments += ["--feedback-email", feedbackEmail]
         }
         if let publicKey {
             arguments += ["--public-key", publicKey]
@@ -582,6 +593,106 @@ final class CLITests: FixedKeyTestCase {
         let guide = try String(
             contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
         XCTAssertTrue(guide.contains("Trial policy: soft"))
+    }
+
+    func testIntegrateFreemiumEmbedsFreeTierAndFeedbackLink() throws {
+        let output = tempDir.appendingPathComponent("Freemium")
+        try runIntegrate(
+            output: output, ui: "swiftui", distribution: "freemium",
+            feedbackURL: "https://example.com/feedback/pixelpro", publicKey: publicKeyBase64)
+
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let freemium: Bool = true"))
+        XCTAssertTrue(config.contains(
+            "static let feedbackURL: URL? = URL(string: \"https://example.com/feedback/pixelpro\")"))
+
+        let manager = try String(
+            contentsOf: output.appendingPathComponent("LicenseManager.swift"), encoding: .utf8)
+        XCTAssertTrue(manager.contains("case free"))
+        XCTAssertTrue(manager.contains("var isPro: Bool"))
+        XCTAssertTrue(manager.contains("func feedbackLink() -> URL?"))
+
+        let view = try String(
+            contentsOf: output.appendingPathComponent("LicenseActivationView.swift"), encoding: .utf8)
+        XCTAssertTrue(view.contains("Request a feature"))
+        XCTAssertTrue(view.contains("Upgrade to Pro"))
+
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Distribution: freemium"))
+        XCTAssertTrue(guide.contains("Feedback link: `https://example.com/feedback/pixelpro`"))
+    }
+
+    func testIntegrateDefaultsToPaidDistributionWithoutFeedbackLink() throws {
+        let output = tempDir.appendingPathComponent("PaidDefault")
+        try runIntegrate(output: output, publicKey: publicKeyBase64)
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains("static let freemium: Bool = false"))
+        XCTAssertTrue(config.contains("static let feedbackURL: URL? = nil"))
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Distribution: paid"))
+        XCTAssertTrue(guide.contains("Feedback link: not configured"))
+    }
+
+    func testIntegrateRejectsFreemiumWithTrialOrHardPolicy() throws {
+        let withTrial = tempDir.appendingPathComponent("FreemiumTrial")
+        XCTAssertThrowsError(
+            try runIntegrate(
+                output: withTrial, trial: "7d", distribution: "freemium",
+                publicKey: publicKeyBase64),
+            "freemium must refuse a keyless trial: the free tier never expires")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: withTrial.path))
+
+        let hardGate = tempDir.appendingPathComponent("FreemiumHard")
+        XCTAssertThrowsError(
+            try runIntegrate(
+                output: hardGate, ui: "swiftui", trialPolicy: "hard",
+                distribution: "freemium", publicKey: publicKeyBase64),
+            "freemium must refuse the hard gate: the free core never locks")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: hardGate.path))
+    }
+
+    func testIntegrateFeedbackEmailRendersMailtoLink() throws {
+        let output = tempDir.appendingPathComponent("FeedbackEmail")
+        try runIntegrate(
+            output: output, feedbackEmail: "dev@example.com", publicKey: publicKeyBase64)
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains(
+            "static let feedbackURL: URL? = URL(string: \"mailto:dev@example.com\")"))
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("Feedback link: `mailto:dev@example.com`"))
+    }
+
+    func testIntegrateRejectsBadFeedbackEmailsAndBothDestinations() throws {
+        for bad in ["not-an-email", "two@@example.com", "x@nodot", "a\"b@example.com", "a@example.com/path"] {
+            let output = tempDir.appendingPathComponent("BadEmail-\(bad.hashValue)")
+            XCTAssertThrowsError(
+                try runIntegrate(output: output, feedbackEmail: bad, publicKey: publicKeyBase64),
+                "--feedback-email \(bad) must be rejected")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        }
+        let both = tempDir.appendingPathComponent("BothFeedback")
+        XCTAssertThrowsError(
+            try runIntegrate(
+                output: both, feedbackURL: "https://example.com/feedback",
+                feedbackEmail: "dev@example.com", publicKey: publicKeyBase64),
+            "--feedback-url and --feedback-email together must be rejected")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: both.path))
+    }
+
+    func testIntegrateRejectsUnsafeFeedbackURLsWithoutCreatingOutput() throws {
+        for bad in ["http://example.com/feedback", "https://example.com/\"injected\""] {
+            let output = tempDir.appendingPathComponent("BadFeedback-\(bad.hashValue)")
+            XCTAssertThrowsError(
+                try runIntegrate(output: output, feedbackURL: bad, publicKey: publicKeyBase64),
+                "--feedback-url \(bad) must be rejected")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        }
     }
 
     func testIntegrateRejectsHardPolicyWithoutSwiftUI() throws {

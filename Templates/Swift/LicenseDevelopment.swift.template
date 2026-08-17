@@ -25,7 +25,7 @@ enum IndieLicenseDevelopmentScenario: String, CaseIterable, Identifiable {
         case .trial: "Trial — 7 Days Left"
         case .trialEndingToday: "Trial — Ends Today"
         case .trialExpired: "Trial Ended"
-        case .unlicensed: "Not Licensed"
+        case .unlicensed: LicenseConfig.freemium ? "Free Tier" : "Not Licensed"
         case .renewalRequired: "Renewal Required"
         case .invalidLicense: "Invalid License"
         case .storageFailure: "Storage Unavailable"
@@ -76,7 +76,9 @@ enum IndieLicenseDevelopmentScenario: String, CaseIterable, Identifiable {
         case .trialExpired:
             return .trialExpired(on: today.addingTimeInterval(-86_400))
         case .unlicensed:
-            return .unlicensed
+            // Freemium builds never show .unlicensed; simulate their real
+            // keyless state instead so the harness matches production.
+            return LicenseConfig.freemium ? .free : .unlicensed
         case .renewalRequired:
             return .renewalRequired(until: today.addingTimeInterval(-86_400))
         case .invalidLicense:

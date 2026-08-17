@@ -11,10 +11,12 @@ struct LicenseActivationView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Activate License")
+            Text(LicenseConfig.freemium ? "Unlock Pro" : "Activate License")
                 .font(.title2.weight(.semibold))
 
-            Text("Paste your license key to unlock licensed features.")
+            Text(LicenseConfig.freemium
+                ? "Paste your license key to unlock Pro features. The core app stays free."
+                : "Paste your license key to unlock licensed features.")
                 .foregroundStyle(.secondary)
 
             if case .trial(let daysRemaining, _) = license.state {
@@ -40,7 +42,15 @@ struct LicenseActivationView: View {
                 .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
             if let purchaseURL = LicenseConfig.purchaseURL {
-                Link("Buy a license", destination: purchaseURL)
+                Link(LicenseConfig.freemium ? "Upgrade to Pro" : "Buy a license",
+                     destination: purchaseURL)
+                    .font(.callout)
+            }
+
+            if let feedback = license.feedbackLink() {
+                // Opened in the browser only; the app never performs a network
+                // request. The link carries the current tier and app version.
+                Link("Request a feature", destination: feedback)
                     .font(.callout)
             }
 
@@ -55,7 +65,7 @@ struct LicenseActivationView: View {
 
     private var errorMessage: String? {
         switch license.state {
-        case .unlicensed, .licensed, .trial:
+        case .unlicensed, .free, .licensed, .trial:
             return nil
         case .trialExpired:
             return "Your free trial has ended. Enter a license key to continue."
