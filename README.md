@@ -80,8 +80,9 @@ The output contains:
   feedback URLs;
 - `LicenseManager.swift` — launch validation, secure persistence, app state,
   keyless-trial tracking;
-- `LicenseDevelopment.swift` — automatic Debug-only full access and native
-  license-state testing menu; compiled out of Release builds;
+- `LicenseDevelopment.swift` — Debug-only license-state preset simulator with
+  a native testing menu, derived from the app's configuration; compiled out
+  of Release builds;
 - optional `LicenseActivationView.swift` — neutral key entry with an optional
   "Buy a license" link;
 - optional `LicenseBadgeView.swift` — drop-in trial/unlock/renew status badge
@@ -95,10 +96,12 @@ The output contains:
 free, trial, trial-expired, renewal, invalid, and storage-failure states. The
 app still owns feature policy, checkout, pricing, UI copy, and localization.
 
-Debug builds start with simulated full access, so a developer's real trial
-never blocks normal work. The automatically installed **IndieLicense Testing**
-menu switches the running app between all customer-facing
-license states or the real persisted state. This uses only `#if DEBUG` and
+Debug builds start in a simulated preset — paid apps with a lifetime key so a
+developer's real trial never blocks normal work, freemium apps in the free
+preset real users see. The automatically installed **IndieLicense Testing**
+menu lists deterministic presets derived from the app's configuration
+(freemium phases, trial lengths, gate policy — each pinning the license
+state and fixed day counts) plus the real persisted state. This uses only `#if DEBUG` and
 AppKit—it does not depend on AppUnbound or any other development tool. Release
 builds contain none of the harness. UI tests may select a state with
 `--indielicense-state trial-expired` or `INDIELICENSE_TEST_STATE=trial-expired`.

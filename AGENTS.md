@@ -164,9 +164,12 @@ script locally.
   (`LicenseActivationView`) and a drop-in status badge (`LicenseBadgeView`)
   showing trial days remaining / trial ended / unlock / renew / failure states.
 - **Generated development states**: every Swift integration emits a Debug-only,
-  in-memory state harness and automatic AppKit menu. Debug defaults to full
-  access; Release compiles the harness out. Keep it independent from AppUnbound
-  and other host-specific development tools.
+  in-memory preset simulator and automatic AppKit menu. Presets are derived
+  from the app's configuration (freemium / trial length / gate policy), each
+  pinning the complete simulated world with fixed day counts; paid apps
+  default to a simulated lifetime key, freemium apps to the free preset.
+  Release compiles the harness out. Keep it independent from AppUnbound and
+  other host-specific development tools.
 - **Purchase link**: `--purchase-url https://…` adds a "Buy a license" button
   (opened in the browser only — the app never makes a network call).
 - **Trial policy**: `--trial-policy soft|hard`. Soft (default): the app keeps

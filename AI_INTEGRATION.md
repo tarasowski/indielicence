@@ -176,8 +176,10 @@ Choose one supported path:
   The command refuses to overwrite existing files. Inspect and adapt the output,
   add its `.swift` files to the app target, and follow `LICENSE_INTEGRATION.md`.
   Every generated Swift integration includes a self-contained development
-  harness: Debug builds default to simulated full access and automatically add
-  an **IndieLicense Testing** menu. It is guarded by `#if DEBUG`,
+  harness: Debug builds start in a simulated preset (paid: a lifetime key so
+  development is never blocked; freemium: the free preset real users see) and
+  automatically add an **IndieLicense Testing** menu listing the presets that
+  can actually occur for the app's model. It is guarded by `#if DEBUG`,
   never touches real persisted state while simulating, has no dependency on a
   particular build/launch tool, and is absent from Release builds. Do not add
   AppUnbound-specific bundle-id or channel checks to this generalized harness.

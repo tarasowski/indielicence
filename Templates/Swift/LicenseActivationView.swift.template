@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Neutral, price-free key entry. Adapt the copy and styling to your app.
-/// Set `allowDismiss: false` when embedding in a blocking context (the hard
-/// gate) where "Not now" must not be offered.
+/// Neutral, price-free key entry, styled as a centered card sheet: icon
+/// badge, large title, rounded fields, and card-style action rows. Adapt the
+/// copy and styling to your app. Set `allowDismiss: false` when embedding in
+/// a blocking context (the hard gate) where closing must not be offered.
 struct LicenseActivationView: View {
     @ObservedObject var license: LicenseManager
     var allowDismiss: Bool = true
@@ -10,53 +11,175 @@ struct LicenseActivationView: View {
     @State private var key = ""
 {{FEEDBACK_STATE}}
 
+    /// One radius for every control on the sheet.
+    private let cornerRadius: CGFloat = 12
+
     var body: some View {
-        VStack(spacing: 16) {
-            Text(LicenseConfig.freemium ? "Unlock Pro" : "Activate License")
-                .font(.title2.weight(.semibold))
+        VStack(spacing: 0) {
+            ZStack {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.25))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 10)
+                if allowDismiss {
+                    HStack {
+                        Spacer()
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(Color.primary.opacity(0.05)))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 12)
+                        .padding(.trailing, 14)
+                    }
+                }
+            }
 
-            Text(LicenseConfig.freemium
-                ? "Paste your license key to unlock Pro features. The core app stays free."
-                : "Paste your license key to unlock licensed features.")
-                .foregroundStyle(.secondary)
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.accentColor)
+                    .frame(width: 64, height: 64)
+                    .overlay(
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(.white))
+                    .shadow(color: Color.accentColor.opacity(0.3), radius: 10, y: 4)
+                    .padding(.bottom, 10)
 
-            if case .trial(let daysRemaining, _) = license.state {
-                Text(daysRemaining == 0
-                    ? "Free trial ends today."
-                    : "Free trial: \(daysRemaining) day\(daysRemaining == 1 ? "" : "s") remaining.")
-                    .font(.caption)
+                Text(LicenseConfig.freemium ? "Unlock Pro" : "Activate License")
+                    .font(.system(size: 26, weight: .bold))
+
+                Text(LicenseConfig.freemium
+                    ? "Paste your license key to unlock Pro features.\nThe core app stays free."
+                    : "Paste your license key to unlock licensed features.")
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if case .trial(let daysRemaining, _) = license.state {
+                    Text(daysRemaining == 0
+                        ? "Free trial ends today."
+                        : "Free trial: \(daysRemaining) day\(daysRemaining == 1 ? "" : "s") remaining.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding(.top, 18)
 
-            TextField("License key", text: $key)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(activate)
+            VStack(spacing: 14) {
+                TextField("License Key", text: $key)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 13)
+                    .background(fieldShape)
+                    .onSubmit(activate)
 
-            if let message = errorMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
+                if let message = errorMessage {
+                    Text(message)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            Button("Activate", action: activate)
-                .buttonStyle(.borderedProminent)
-                .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button(action: activate) {
+                    Text("Activate")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(keyIsEmpty ? Color.secondary : Color.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(keyIsEmpty ? Color.primary.opacity(0.06) : Color.accentColor))
+                }
+                .buttonStyle(.plain)
+                .disabled(keyIsEmpty)
+                .keyboardShortcut(.defaultAction)
 
-            if let purchaseURL = LicenseConfig.purchaseURL {
-                Link(LicenseConfig.freemium ? "Upgrade to Pro" : "Buy a license",
-                     destination: purchaseURL)
-                    .font(.callout)
-            }
+                actionLinks
 
-{{FEEDBACK_ACTION}}
-
-            if allowDismiss {
-                Button("Not now") { dismiss() }
+                if allowDismiss {
+                    Button { dismiss() } label: {
+                        Text("Not Now")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .background(cardShape)
+                    }
                     .buttonStyle(.plain)
+                    .keyboardShortcut(.cancelAction)
+                }
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 24)
         }
-        .padding(28)
-        .frame(width: 380)
+        .frame(width: 440)
+    }
+
+    private var keyIsEmpty: Bool {
+        key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasFeedbackRow: Bool { {{FEEDBACK_PRESENT}} }
+
+    /// Purchase and feedback links, grouped into one card of tappable rows.
+    @ViewBuilder private var actionLinks: some View {
+        if LicenseConfig.purchaseURL != nil || hasFeedbackRow {
+            VStack(spacing: 0) {
+                if let purchaseURL = LicenseConfig.purchaseURL {
+                    Link(destination: purchaseURL) {
+                        actionRow(
+                            icon: "star",
+                            title: LicenseConfig.freemium ? "Upgrade to Pro" : "Buy a license")
+                    }
+                    .buttonStyle(.plain)
+                }
+                if LicenseConfig.purchaseURL != nil && hasFeedbackRow {
+                    Divider().padding(.leading, 52)
+                }
+{{FEEDBACK_ACTION}}
+            }
+            .background(cardShape)
+        }
+    }
+
+    private func actionRow(icon: String, title: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 26)
+            Text(title)
+                .font(.system(size: 14))
+                .foregroundStyle(.primary)
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .contentShape(Rectangle())
+    }
+
+    private var cardShape: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(Color(nsColor: .textBackgroundColor))
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.6)))
+    }
+
+    private var fieldShape: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(Color(nsColor: .textBackgroundColor))
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                .strokeBorder(Color(nsColor: .separatorColor)))
     }
 
     private var errorMessage: String? {
