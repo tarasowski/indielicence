@@ -100,6 +100,10 @@ are derived labels, fully determined by field presence:
 > scaffolding (`integrate swift --trial Nd`) involves no license key and has
 > no wire representation. It is app-side state only (a stamp-once start day
 > in the app's secure storage) and is normatively irrelevant to this spec.
+> The same applies to the scaffolding's *freemium* distribution
+> (`--distribution freemium`): its free tier involves no key at all, and a
+> "Pro" key is an ordinary lifetime/updates key — the tier split is app-side
+> feature policy with no wire representation.
 
 ## Activation anchoring
 

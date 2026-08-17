@@ -21,6 +21,10 @@ enum IntegrationTrialPolicy: String, ExpressibleByArgument, CaseIterable {
     case soft, hard
 }
 
+enum IntegrationDistribution: String, ExpressibleByArgument, CaseIterable {
+    case paid, freemium
+}
+
 struct Integrate: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Generate app-owned licensing source files without adding an SDK.",
@@ -75,6 +79,29 @@ struct Integrate: ParsableCommand {
     """)
     var purchaseURL: String?
 
+    @Option(help: """
+    paid or freemium. Paid: the app requires a license, optionally after a \
+    keyless trial. Freemium: the core app is free forever without a key and a \
+    purchased key unlocks the Pro tier — integrate it from the app's first \
+    release so Pro can be introduced later without a migration.
+    """)
+    var distribution: IntegrationDistribution = .paid
+
+    @Option(name: .customLong("feedback-url"), help: """
+    Optional https link where users request features. Shown as a 'Request a \
+    feature' link in the generated UI with tier/version query items; only ever \
+    opened in the browser — the app never performs a network request.
+    """)
+    var feedbackURL: String?
+
+    @Option(name: .customLong("feedback-email"), help: """
+    Optional email address for feature requests instead of a web page. The \
+    'Request a feature' link then opens the user's mail client with product, \
+    version, and tier pre-filled in the subject. Mutually exclusive with \
+    --feedback-url; the app still never performs a network request.
+    """)
+    var feedbackEmail: String?
+
     @OptionGroup var keyDirOption: KeyDirOption
 
     func run() throws {
@@ -95,8 +122,32 @@ struct Integrate: ParsableCommand {
         }
 
         let buildDay = try parseBuildDay(buildDate)
+        if distribution == .freemium {
+            // The free core must never nag, expire, or lock: a trial window or
+            // a hard gate would contradict the promise the app makes.
+            guard trial == nil else {
+                throw CLIError.message(
+                    "--distribution freemium already includes the free tier; --trial only applies to paid apps")
+            }
+            guard trialPolicy == .soft else {
+                throw CLIError.message(
+                    "--distribution freemium cannot use --trial-policy hard: the free core must never lock")
+            }
+        }
         let trialDays = try trial.map { try parseDurationDays($0, flag: "--trial") }
-        let purchase = try purchaseURL.map(validatePurchaseURL)
+        let purchase = try purchaseURL.map { try validateHTTPSURL($0, flag: "--purchase-url") }
+        let feedback: String?
+        if let feedbackURL {
+            guard feedbackEmail == nil else {
+                throw CLIError.message(
+                    "choose one feedback destination: --feedback-url or --feedback-email, not both")
+            }
+            feedback = try validateHTTPSURL(feedbackURL, flag: "--feedback-url")
+        } else if let feedbackEmail {
+            feedback = "mailto:" + (try validateFeedbackEmail(feedbackEmail))
+        } else {
+            feedback = nil
+        }
         let outputURL = URL(
             fileURLWithPath: (output as NSString).expandingTildeInPath,
             isDirectory: true).standardizedFileURL
@@ -113,6 +164,8 @@ struct Integrate: ParsableCommand {
                     "TRIAL_DAYS": trialDays.map(String.init) ?? "nil",
                     "PURCHASE_URL": purchase.map { "URL(string: \"\($0)\")" } ?? "nil",
                     "HARD_GATE": trialPolicy == .hard ? "true" : "false",
+                    "FREEMIUM": distribution == .freemium ? "true" : "false",
+                    "FEEDBACK_URL": feedback.map { "URL(string: \"\($0)\")" } ?? "nil",
                 ])),
             ("LicenseManager.swift", EmbeddedTemplates.licenseManager),
             ("LicenseDevelopment.swift", EmbeddedTemplates.licenseDevelopment),
@@ -131,6 +184,10 @@ struct Integrate: ParsableCommand {
             values: [
                 "PRODUCT": resolvedProduct,
                 "BUILD_DATE": buildDate,
+                "DISTRIBUTION_DESCRIPTION": distribution == .freemium
+                    ? "freemium — the core app is free forever; a key unlocks Pro (`license.isPro`)"
+                    : "paid — a license is required (`license.hasFullAccess`)",
+                "FEEDBACK_DESCRIPTION": feedback.map { "`\($0)`" } ?? "not configured",
                 "DENYLIST_DESCRIPTION": denylist == .bundled
                     ? "bundled signed `\(resolvedProduct).denylist.json`"
                     : "disabled",
@@ -149,6 +206,9 @@ struct Integrate: ParsableCommand {
         print("Generated Swift licensing plumbing for '\(resolvedProduct)' in \(outputURL.path)")
         print("Add the .swift files to the app target, then follow LICENSE_INTEGRATION.md.")
         print("Debug builds start with full access and include the IndieLicense Testing menu.")
+        if distribution == .freemium {
+            print("Freemium: the core app must stay fully usable with no key. Gate only Pro features, with license.isPro.")
+        }
         if ui == .swiftui && purchase == nil {
             print("Tip: pass --purchase-url <https-link> to show a 'Buy a license' button,")
             print("or set LicenseConfig.purchaseURL later in the generated code.")
@@ -166,14 +226,29 @@ struct Integrate: ParsableCommand {
     }
 }
 
-private func validatePurchaseURL(_ value: String) throws -> String {
+private func validateHTTPSURL(_ value: String, flag: String) throws -> String {
     // The value is interpolated into a generated Swift string literal, so the
     // character set is restricted to printable ASCII without quotes/backslashes.
     let allowed = value.utf8.allSatisfy { (0x21...0x7e).contains($0) && $0 != 0x22 && $0 != 0x5c }
     guard allowed, value.utf8.count <= 2048,
           let url = URL(string: value), url.absoluteString == value,
           url.scheme == "https", let host = url.host, !host.isEmpty else {
-        throw CLIError.message("--purchase-url must be a plain absolute https URL")
+        throw CLIError.message("\(flag) must be a plain absolute https URL")
+    }
+    return value
+}
+
+private func validateFeedbackEmail(_ value: String) throws -> String {
+    // Interpolated into a generated Swift string literal inside a mailto URL,
+    // so the character set is restricted like the https URLs above.
+    let allowed = value.utf8.allSatisfy {
+        (0x21...0x7e).contains($0) && $0 != 0x22 && $0 != 0x5c && $0 != 0x3f && $0 != 0x2f
+    }
+    let parts = value.split(separator: "@", omittingEmptySubsequences: false)
+    guard allowed, value.utf8.count <= 254, parts.count == 2,
+          !parts[0].isEmpty, parts[1].contains("."),
+          parts[1].first != ".", parts[1].last != "." else {
+        throw CLIError.message("--feedback-email must be a plain email address like you@example.com")
     }
     return value
 }

@@ -17,6 +17,19 @@ enum LicenseConfig {
     /// generated UI. Opened in the default browser; never fetched by the app.
     static let purchaseURL: URL? = {{PURCHASE_URL}}
 
+    /// Distribution model. False: the app is paid (optionally with a keyless
+    /// trial). True: freemium — the core app is free forever without a key and
+    /// a purchased license key unlocks the Pro tier. Gate Pro features with
+    /// `license.isPro`; the free core needs no license checks at all.
+    static let freemium: Bool = {{FREEMIUM}}
+
+    /// Where users request features or report what's missing, or nil to hide
+    /// the "Request a feature" link in the generated UI. Either an https page
+    /// (opened in the browser with mode/version query items) or a mailto:
+    /// address (opens the mail client with a pre-filled subject); never
+    /// fetched by the app.
+    static let feedbackURL: URL? = {{FEEDBACK_URL}}
+
     /// Keyless trial length in days, or nil when the app has no built-in trial.
     /// The trial starts on the customer's first launch and the start day is
     /// anchored once in the license file store; no license key is involved.

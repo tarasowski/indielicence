@@ -65,15 +65,17 @@ remain in the secure key directory.
 Use `--ui none` when the app already has key-entry UI. Use `--denylist none`
 when revocation is not being bundled yet. Use `--trial 7d` for a built-in
 keyless trial and `--purchase-url` for a "Buy a license" button (both
-optional; see below). An agent or CI environment that has only the safe
-public key can use `--public-key BASE64 --product pixelpro` instead of
-`--key-dir`.
+optional; see below). Use `--distribution freemium` for free-first apps and
+`--feedback-url` for an in-app "Request a feature" link (see below). An agent
+or CI environment that has only the safe public key can use
+`--public-key BASE64 --product pixelpro` instead of `--key-dir`.
 
 The output contains:
 
 - `LicenseVerifier.swift` — the canonical standalone verifier;
 - `LicenseConfig.swift` — public key, product, release build date, denylist,
-  optional keyless trial length, optional purchase URL;
+  distribution model, optional keyless trial length, optional purchase and
+  feedback URLs;
 - `LicenseManager.swift` — launch validation, secure persistence, app state,
   keyless-trial tracking;
 - `LicenseDevelopment.swift` — automatic Debug-only full access and native
@@ -86,10 +88,10 @@ The output contains:
   behind key entry when full access ends (`--trial-policy hard`);
 - `LICENSE_INTEGRATION.md` — wiring and test checklist.
 
-`LicenseManager` exposes `isLicensed`, `hasFullAccess` (licensed **or** in
-keyless trial), and explicit unlicensed, trial, trial-expired, renewal,
-invalid, and storage-failure states. The app still owns feature policy,
-checkout, pricing, UI copy, and localization.
+`LicenseManager` exposes `isLicensed`, `isPro` (freemium Pro tier),
+`hasFullAccess` (licensed **or** in keyless trial), and explicit unlicensed,
+free, trial, trial-expired, renewal, invalid, and storage-failure states. The
+app still owns feature policy, checkout, pricing, UI copy, and localization.
 
 Debug builds start with simulated full access, so a developer's real trial
 never blocks normal work. The automatically installed **IndieLicense Testing**
@@ -245,6 +247,43 @@ the app is licensed. Clicking it opens the key-entry sheet, which includes a
 MakersDrop/Gumroad/Paddle/Lemon Squeezy product page). The link is only ever
 opened in the customer's browser; the app itself still makes no network calls.
 
+## Freemium — free forever, Pro by key
+
+For free-first apps ("ship free, build an audience, monetize later"), pass
+`--distribution freemium` at integrate time — ideally from the app's very
+first release, so a Pro tier can arrive in a later update with no migration:
+
+```sh
+indielicense integrate swift --product <id> --build-date YYYY-MM-DD \
+  --output App/License --ui swiftui --distribution freemium \
+  --purchase-url https://your.store/app --feedback-url https://your.store/feedback/app
+```
+
+With freemium, a customer with no stored key is in the permanent `free`
+state: the core app works fully, forever — no trial clock, no nagging, no
+lock screen (`--trial` and `--trial-policy hard` are refused by design). A
+purchased key — an ordinary lifetime or updates key, nothing new on the wire —
+flips `license.isPro`, which is the only thing you gate Pro features with. The
+generated UI reads "Unlock Pro" / "Upgrade to Pro", and the badge shows a
+quiet "Upgrade to Pro" capsule in the free tier. One promise to keep: features
+that shipped free stay free; Pro only ever locks features that are new.
+
+### Feature requests — hear from users without going online
+
+`--feedback-url https://…` adds a "Request a feature" link to the generated
+activation sheet and exposes `license.feedbackLink()` for a Help-menu item.
+The link opens in the customer's browser with `mode` (free/pro/trial) and
+`version` query items, so submissions arrive pre-tagged per app and per tier —
+and the app itself still makes no network call, ever. This is what makes the
+free phase worth it: every free install becomes a listening post that tells
+you which features belong in Pro. Works with paid distribution too.
+
+No feedback page? Pass `--feedback-email you@example.com` instead (one or the
+other, not both): the same link then opens the customer's mail client with
+the product, version, and tier pre-filled in the subject line. And like every
+other flag here, feedback is optional — mint-keys-only users who handle
+feedback on their own site simply omit it and no link is generated.
+
 ## CLI reference
 
 ```
@@ -258,8 +297,10 @@ indielicense verify <key>                   full validation, exit 0/1
 indielicense inspect <key>                  decode a key, no key material needed
 indielicense integrate swift --product <id> --build-date YYYY-MM-DD
                      --output <app-source-directory> [--ui none|swiftui]
-                     [--denylist none|bundled] [--trial 7d]
-                     [--trial-policy soft|hard] [--purchase-url <https-link>]
+                     [--denylist none|bundled] [--distribution paid|freemium]
+                     [--trial 7d] [--trial-policy soft|hard]
+                     [--purchase-url <https-link>]
+                     [--feedback-url <https-link> | --feedback-email <address>]
                      [--public-key <base64>]
                                             generate app-owned Swift plumbing
 indielicense revoke <key_id> [--note "refunded"] --key-dir <secure-directory>

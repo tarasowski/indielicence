@@ -32,6 +32,10 @@ struct LicenseBadgeView: View {
         switch license.state {
         case .licensed:
             return nil
+        case .free:
+            // Freemium free tier: quiet affordance to upgrade (or, without a
+            // purchase link yet, to reach key entry and the feedback link).
+            return (LicenseConfig.purchaseURL != nil ? "Upgrade to Pro" : "Free", false)
         case .trial(let daysRemaining, _):
             if daysRemaining == 0 { return ("Trial ends today", true) }
             return ("\(daysRemaining) day\(daysRemaining == 1 ? "" : "s") left in trial",
