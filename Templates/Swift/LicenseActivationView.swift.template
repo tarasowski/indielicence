@@ -8,6 +8,7 @@ struct LicenseActivationView: View {
     var allowDismiss: Bool = true
     @Environment(\.dismiss) private var dismiss
     @State private var key = ""
+{{FEEDBACK_STATE}}
 
     var body: some View {
         VStack(spacing: 16) {
@@ -47,12 +48,7 @@ struct LicenseActivationView: View {
                     .font(.callout)
             }
 
-            if let feedback = license.feedbackLink() {
-                // Opened in the browser only; the app never performs a network
-                // request. The link carries the current tier and app version.
-                Link("Request a feature", destination: feedback)
-                    .font(.callout)
-            }
+{{FEEDBACK_ACTION}}
 
             if allowDismiss {
                 Button("Not now") { dismiss() }

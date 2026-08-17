@@ -37,8 +37,15 @@ jobs:
       - name: End-to-end demo
         run: Examples/demo.sh
 
-      - name: No network calls anywhere in the codebase
+      - name: No network calls outside the opt-in feedback view
+        # The verifiers, the CLI, and every template except the endpoint-mode
+        # LicenseFeedbackView must stay free of networking symbols. That view
+        # is the single sanctioned exception: its one request is composed by
+        # the user and sent only when they press Send.
         run: |
           ! rg -n -g '*.swift' -g '*.mjs' \
             'URLSession|NSURLConnection|CFNetwork|import Network|NW(Connection|Listener|Path)|node:(http|https|net|tls|dgram|dns)|\b(fetch|WebSocket|socket|connect|getaddrinfo)\s*\(|\b(curl|wget)\b' \
             Sources Verifier
+          ! rg -n -g '*.template' -g '!LicenseFeedbackView.swift.template' \
+            'URLSession|NSURLConnection|CFNetwork|import Network|NW(Connection|Listener|Path)|\b(fetch|WebSocket|socket|connect|getaddrinfo)\s*\(' \
+            Templates

@@ -42,11 +42,16 @@ Generated configuration:
    non-dismissible lock screen with key entry and the purchase link. The
    `LicenseManager` powering the gate must live at app level, not inside a
    view that only appears after the gate.
-5. When `LicenseConfig.feedbackURL` is set, the activation sheet shows a
-   "Request a feature" link; consider also adding a Help-menu item that opens
-   `license.feedbackLink()`. The link carries the current tier (free/pro/trial)
-   and app version as query items and is only ever opened in the browser — the
-   app never performs a network request.
+5. Feedback, when configured. With `LicenseConfig.feedbackURL` the activation
+   sheet shows a "Request a feature" link; consider also adding a Help-menu
+   item that opens `license.feedbackLink()`. The link carries the current tier
+   (free/pro/trial) and app version as query items and is only ever opened in
+   the browser or mail client — no networking code exists in these modes.
+   With `LicenseConfig.feedbackEndpoint` the sheet opens the generated
+   `LicenseFeedbackView` instead (present it from a Help-menu item too), which
+   POSTs the user's message as JSON exclusively when they press Send. That
+   view is the app's only network call — never add background sends,
+   telemetry, or analytics anywhere.
 6. Keep checkout, prices, feature policy, copy, and localization in the app.
 7. Update `LicenseConfig.buildDate` to the immutable UTC release day before
    every release. Never calculate it from `Date()` or file metadata.
@@ -78,6 +83,9 @@ can reset it, just as they could request another trial key.
   works, nothing nags or expires, and a valid key flips `isPro` immediately.
 - With a feedback URL: the "Request a feature" link opens the browser with the
   correct tier and version query items, and the app makes no network request.
+- With a feedback endpoint: the sheet submits only on an explicit Send with
+  the correct tier and version, handles offline/server errors without silent
+  retries, and nothing else in the app performs a network request.
 
 The private signing key and key-id state must remain outside the app repository.
 Only the public key in `LicenseConfig.swift` belongs in the shipped app.

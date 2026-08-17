@@ -4,7 +4,9 @@ You are working with **IndieLicense**: offline Ed25519 license keys for indie
 Mac apps. A developer mints keys locally with the `indielicense` CLI, sells
 them through a payment platform (MakersDrop, Gumroad, Paddle, Lemon Squeezy),
 and their app verifies keys fully offline. There is **no server component and
-no network call anywhere** — never add one.
+nothing ever calls home** — licensing itself performs no network activity of
+any kind, and the only network code that can exist is the opt-in feedback
+sheet whose single request the user composes and sends (safety rule 7).
 
 `SPEC.md` is the normative wire-format spec. `README.md` is the human guide.
 `AI_INTEGRATION.md` is the canonical cross-agent playbook for integrating this
@@ -30,8 +32,14 @@ and get tasks done.
    denylists, no `rm -rf` outside temp dirs you created yourself.
 6. **Never run `indielicense revoke` unless the user explicitly asked** to
    revoke that specific key id — it changes what shipped apps will accept.
-7. **Do not add networking, telemetry, or analytics code** to any target.
-   CI greps for networking symbols and will fail.
+7. **Nothing ever calls home. No telemetry, no analytics, no automatic
+   networking — anywhere.** The single sanctioned exception is the opt-in
+   `LicenseFeedbackView` template (endpoint feedback mode): its one request is
+   composed by the user and sent exclusively when they press Send, and the
+   file is generated only when the developer passes `--feedback-endpoint`.
+   Every other file — the verifiers, the CLI, every other template — must stay
+   free of networking symbols; CI greps and will fail. Never add a second
+   networking site, background sends, retries-on-launch, or identifiers.
 8. **Do not weaken the crypto or validation order.** Any wire-format change
    requires bumping the version byte and updating `SPEC.md` + both verifiers +
    vectors together. When in doubt, ask.
@@ -137,14 +145,17 @@ script locally.
   wire-format change. Refuses `--trial` and `--trial-policy hard` by design.
   Integrate it from the app's first release so Pro can arrive in a later update
   with no migration; features that shipped free must stay free.
-- **Feedback link** (optional, works with every distribution and key mode):
-  `--feedback-url https://…` adds a "Request a feature" link (and
-  `license.feedbackLink()`) carrying tier (free/pro/trial) and app version as
-  query items — opened in the browser only, never fetched. Alternatively
-  `--feedback-email you@example.com` (mutually exclusive) opens the mail
-  client with those pre-filled in the subject, for developers who only mint
-  keys here and collect feedback in their own inbox. Either way the app stays
-  fully offline.
+- **Feedback** (optional, works with every distribution and key mode; choose
+  exactly one — or none, and no feedback code is generated at all):
+  - `--feedback-endpoint https://…` — an in-app "Request a feature" sheet
+    (`LicenseFeedbackView`, requires `--ui swiftui`) that POSTs the
+    user-composed request as JSON {mode, version, message, email} to the
+    developer's endpoint. This is the only networking code the scaffold can
+    emit, and it sends exclusively when the user presses Send.
+  - `--feedback-url https://…` — a browser link carrying tier and version
+    query items; zero networking code in the app.
+  - `--feedback-email you@example.com` — opens the mail client with tier and
+    version pre-filled in the subject; zero networking code in the app.
 - **Keyless trial** (no key involved): `integrate swift --trial 7d` bakes a
   first-launch trial into the generated app code. Trial keys and the keyless
   trial are independent and compose: ship `--trial 7d` for onboarding, sell
@@ -173,7 +184,7 @@ script locally.
        --build-date YYYY-MM-DD --output <app>/License --ui none --denylist none \
        [--distribution paid|freemium] [--trial 7d] \
        [--purchase-url <https-link>] \
-       [--feedback-url <https-link> | --feedback-email <address>]
+       [--feedback-endpoint <https-link> | --feedback-url <https-link> | --feedback-email <address>]
    ```
    Use `--ui swiftui` only when its neutral UI fits; it also emits
    `LicenseBadgeView`, which the app can drop into a toolbar. Before

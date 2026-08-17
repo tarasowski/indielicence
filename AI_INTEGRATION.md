@@ -22,7 +22,8 @@ Public key: BASE64_PUBLIC_KEY_FROM_INDIELICENSE_INIT
 Keyless trial: none | 7d | 14d | ...   (built-in try-before-buy, no key needed; paid distribution only)
 Trial policy: soft | hard   (soft: features degrade; hard: app locks until a key is entered; paid only)
 Purchase URL: none | https://YOUR_CHECKOUT_PAGE   (shown as a "Buy a license" / "Upgrade to Pro" button)
-Feedback: none | https://YOUR_FEEDBACK_PAGE | you@example.com   (adds a "Request a feature" link, pre-tagged with tier and version — a URL opens the browser, an email opens the mail client; never fetched by the app)
+Feedback: none | endpoint https://YOUR_POST_ENDPOINT | link https://YOUR_FEEDBACK_PAGE | you@example.com
+   (endpoint: an in-app "Request a feature" sheet POSTs the user's message as JSON {mode, version, message, email} — sent exclusively when the user presses Send, never on its own; link: opens the browser pre-tagged with tier and version; email: opens the mail client. Nothing in the app ever calls home.)
 
 Inspect this app to select the Swift or JavaScript verifier. Add a license-entry
 flow, secure persistence, validation on every launch, an immutable release build
@@ -31,8 +32,10 @@ requested, gate paid features with hasFullAccess and surface the generated
 LicenseBadgeView (trial days remaining / unlock / renew). With freemium
 distribution, never gate the core app: it stays fully usable forever with no
 key; gate only Pro features, with license.isPro. Do not add a licensing
-server, network calls, telemetry, or analytics. Never access or modify .private
-or .state files and never commit generated customer keys.
+server, telemetry, analytics, or any network call — the only permitted network
+code is the generated feedback sheet in endpoint mode, which sends exclusively
+when the user presses Send. Never access or modify .private or .state files
+and never commit generated customer keys.
 
 Before generating or changing anything, ask me the licensing-interview
 questions from AI_INTEGRATION.md for every value not already given above
@@ -65,7 +68,7 @@ licensing model is a business decision, not a technical one.
 | 5 | Should the app have a **built-in keyless trial** (everyone can try it on first launch, no key needed)? If yes, how many days? | `integrate --trial` | `7d` or `14d`; independent of question 2 and composes with any key mode |
 | 5b | When full access ends (trial over, no key): **soft** (app keeps running, features degrade — e.g. a watermark) or **hard** (the whole app locks behind a non-dismissible key-entry screen)? | `integrate --trial-policy soft\|hard` | `soft`; `hard` requires `--ui swiftui` and wrapping the root view in `LicenseGateView` |
 | 6 | Where do customers **buy** a license — what is the checkout page URL? | `integrate --purchase-url` | must be `https://…`; shown as a "Buy a license" button, only ever opened in the browser. "None yet" is acceptable — the button is simply hidden |
-| 6b | Where should users **request features** — a feedback page URL (e.g. the app's store feedback page), or a plain email address for developers whose feedback lives in their inbox? | `integrate --feedback-url` or `--feedback-email` (choose one) | URL must be `https://…` and carries tier (free/pro/trial) + app version query items; an email becomes a mailto link with those pre-filled in the subject. Both only ever open the browser/mail client. Strongly recommended for freemium apps — the free phase is only worth it if it produces feedback. "None" hides the link |
+| 6b | How should users **request features**: an in-app form posting to an **endpoint** (e.g. the app's store feedback API — recommended), a feedback page **link**, or a plain **email** address? | `integrate --feedback-endpoint`, `--feedback-url`, or `--feedback-email` (choose exactly one, or none) | endpoint must be `https://…` and generates `LicenseFeedbackView` (requires `--ui swiftui`), which POSTs JSON {mode, version, message, email} exclusively when the user presses Send — the only networking code the scaffold can emit; link/URL carries tier + version query items in the browser; email becomes a mailto with those in the subject. Strongly recommended for freemium apps — the free phase is only worth it if it produces feedback. "None" generates no feedback code at all |
 | 7 | Which **payment platform** delivers the keys (MakersDrop, Gumroad, Lemon Squeezy, Paddle, Stripe, other)? | CSV upload guidance only | affects the handoff instructions, not the code |
 | 8 | Use the generated neutral **SwiftUI UI** (key-entry sheet + status badge), or does the app have its own? | `integrate --ui swiftui\|none` | `swiftui` when the app has no licensing UI yet |
 | 9 | Will refunds/chargebacks need **revocation** (a signed denylist bundled with each release)? | `integrate --denylist bundled\|none`, later `revoke` | `none` to start is fine; can be added later |
@@ -143,14 +146,19 @@ Choose one supported path:
   the app must gate only Pro features (with `license.isPro`), and the generated
   UI reads "Unlock Pro" / "Upgrade to Pro" instead of activation/buy copy.
   Freemium refuses `--trial` and `--trial-policy hard` by design.
-  Pass `--feedback-url https://...` to add a "Request a feature" link to the
-  generated activation sheet (and expose `license.feedbackLink()` for a Help
-  menu item): it opens the URL in the browser with tier and app-version query
-  items so submissions arrive pre-tagged — the app itself never performs a
-  network request. Developers who only mint keys with IndieLicense and collect
-  feedback themselves can pass `--feedback-email you@example.com` instead
-  (mutually exclusive): the link then opens the mail client with product,
-  version, and tier pre-filled in the subject.
+  Choose at most one feedback mode:
+  - `--feedback-endpoint https://...` (with `--ui swiftui`) generates
+    `LicenseFeedbackView`, an in-app "Request a feature" sheet reachable from
+    the activation sheet (present it from a Help-menu item too). It POSTs the
+    user's message as JSON {mode, version, message, email} to the endpoint —
+    exclusively when the user presses Send. That view is the only networking
+    code in the generated files and must stay the app's only feedback call;
+    never add background sends, retries-on-launch, telemetry, or analytics.
+  - `--feedback-url https://...` adds a "Request a feature" browser link (and
+    `license.feedbackLink()` for a Help-menu item) carrying tier and
+    app-version query items — zero networking code in the app.
+  - `--feedback-email you@example.com` opens the mail client with product,
+    version, and tier pre-filled in the subject — zero networking code.
   Add `--trial 7d` only when the user wants a keyless first-launch trial: the
   generated `LicenseManager` then stamps a trial start day once in the license file store
   and reports `.trial`/`.trialExpired` states for customers with no stored key.
@@ -181,7 +189,8 @@ Choose one supported path:
 
 Do not reimplement the wire format or cryptography. Do not weaken or reorder
 validation. Do not introduce a network request, server activation, telemetry,
-or analytics.
+or analytics — the generated `LicenseFeedbackView` (endpoint mode only) is the
+single exception, and its one request must remain user-initiated.
 
 Generated Swift types and UI are starting points owned by the target app. Keep
 product-specific feature policy, migrations, checkout, prices, copy, and
@@ -242,6 +251,9 @@ Add target-app tests covering at least:
   feature works, nothing expires, and a valid key flips `isPro` immediately;
 - feedback-link behavior when configured: the composed URL carries the correct
   tier and version query items and the app performs no network request;
+- feedback-endpoint behavior when configured: the sheet submits only on an
+  explicit Send, reports offline/server errors without retrying silently, and
+  no other code path triggers the request;
 - hard-policy behavior when configured: the lock screen replaces the app when
   access ends, cannot be dismissed, and a valid key restores the app
   immediately;

@@ -1,0 +1,111 @@
+import SwiftUI
+
+/// Opt-in, user-initiated feature-request sheet — generated only when the
+/// integration chose the endpoint feedback mode (`--feedback-endpoint`).
+///
+/// This file contains the ONLY network call in the generated licensing code.
+/// It fires exactly once per explicit press of Send and transmits only what
+/// is visible in this view: the message, the optional email, the app's short
+/// version, and the current tier (free/pro/trial). Nothing is sent in the
+/// background, nothing retries silently, and no identifiers are collected.
+/// Never add telemetry, analytics, or additional networking here or to any
+/// other generated file.
+struct LicenseFeedbackView: View {
+    @ObservedObject var license: LicenseManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var message = ""
+    @State private var email = ""
+    @State private var sending = false
+    @State private var sent = false
+    @State private var errorText: String?
+
+    var body: some View {
+        VStack(spacing: 16) {
+            if sent {
+                Text("Request sent")
+                    .font(.title2.weight(.semibold))
+                Text("Thanks — it went straight to the developer and shapes what gets built next.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Text("Request a feature")
+                    .font(.title2.weight(.semibold))
+                Text("What should this app do next? Your message goes directly to the developer.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                TextEditor(text: $message)
+                    .frame(minHeight: 110)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+
+                TextField("Email (optional — for follow-up questions)", text: $email)
+                    .textFieldStyle(.roundedBorder)
+
+                if let errorText {
+                    Text(errorText)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                HStack {
+                    Button("Cancel") { dismiss() }
+                        .buttonStyle(.plain)
+                    Spacer()
+                    Button(sending ? "Sending…" : "Send") { Task { await send() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(sending || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(28)
+        .frame(width: 420)
+    }
+
+    private var tier: String {
+        switch license.state {
+        case .licensed: return "pro"
+        case .trial: return "trial"
+        default: return "free"
+        }
+    }
+
+    /// The single, user-initiated network request. Called exclusively from the
+    /// Send button above; never call it from anywhere else.
+    private func send() async {
+        guard let endpoint = LicenseConfig.feedbackEndpoint else { return }
+        sending = true
+        defer { sending = false }
+        errorText = nil
+
+        let version = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let payload: [String: String] = [
+            "mode": tier,
+            "version": version,
+            "message": message.trimmingCharacters(in: .whitespacesAndNewlines),
+            "email": email.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                errorText = "Could not send your request right now. Please try again later."
+                return
+            }
+            sent = true
+        } catch {
+            errorText = "You appear to be offline. Your request was not sent."
+        }
+    }
+}
