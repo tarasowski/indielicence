@@ -4,7 +4,9 @@
 
 Generate Ed25519-signed license keys on your own machine, sell them through
 MakersDrop / Gumroad / Lemon Squeezy / Paddle / Stripe, and validate them in
-your app fully offline — no server, no service, no account, no telemetry, no network calls.
+your app fully offline — no server, no service, no account, no telemetry, and
+nothing that ever calls home (the optional feedback sheet sends a message only
+when the user explicitly submits it).
 If this repo disappears tomorrow, your keys and your app keep working.
 
 > **Using a coding agent** (Claude Code, Codex, Cursor)? Give it this repository
@@ -256,7 +258,7 @@ first release, so a Pro tier can arrive in a later update with no migration:
 ```sh
 indielicense integrate swift --product <id> --build-date YYYY-MM-DD \
   --output App/License --ui swiftui --distribution freemium \
-  --purchase-url https://your.store/app --feedback-url https://your.store/feedback/app
+  --purchase-url https://your.store/app --feedback-endpoint https://your.store/api/feedback/app
 ```
 
 With freemium, a customer with no stored key is in the permanent `free`
@@ -268,21 +270,29 @@ generated UI reads "Unlock Pro" / "Upgrade to Pro", and the badge shows a
 quiet "Upgrade to Pro" capsule in the free tier. One promise to keep: features
 that shipped free stay free; Pro only ever locks features that are new.
 
-### Feature requests — hear from users without going online
+### Feature requests — hear from users, nothing ever calls home
 
-`--feedback-url https://…` adds a "Request a feature" link to the generated
-activation sheet and exposes `license.feedbackLink()` for a Help-menu item.
-The link opens in the customer's browser with `mode` (free/pro/trial) and
-`version` query items, so submissions arrive pre-tagged per app and per tier —
-and the app itself still makes no network call, ever. This is what makes the
-free phase worth it: every free install becomes a listening post that tells
-you which features belong in Pro. Works with paid distribution too.
+Feedback is optional and comes in three modes; pick exactly one (or none, in
+which case no feedback code is generated at all). In every mode the app sends
+nothing on its own — a submission happens only when the user explicitly acts.
 
-No feedback page? Pass `--feedback-email you@example.com` instead (one or the
-other, not both): the same link then opens the customer's mail client with
-the product, version, and tier pre-filled in the subject line. And like every
-other flag here, feedback is optional — mint-keys-only users who handle
-feedback on their own site simply omit it and no link is generated.
+- **Endpoint** — `--feedback-endpoint https://…` (with `--ui swiftui`)
+  generates `LicenseFeedbackView`, an in-app "Request a feature" sheet. When —
+  and only when — the user presses Send, it POSTs their message as JSON
+  `{mode, version, message, email}` to your endpoint. That view is the single
+  place networking code can exist in the generated files; everything else
+  remains grep-clean, and apps generated without this flag contain no
+  networking code at all.
+- **Link** — `--feedback-url https://…` adds a "Request a feature" link (and
+  `license.feedbackLink()` for a Help-menu item) that opens the customer's
+  browser with `mode` and `version` query items. Zero networking code.
+- **Email** — `--feedback-email you@example.com` opens the mail client with
+  the product, version, and tier pre-filled in the subject. Zero networking
+  code.
+
+Submissions arrive pre-tagged per app and per tier, which is what makes a
+free-first launch worth it: every free install becomes a listening post that
+tells you which features belong in Pro. Works with paid distribution too.
 
 ## CLI reference
 
@@ -300,7 +310,8 @@ indielicense integrate swift --product <id> --build-date YYYY-MM-DD
                      [--denylist none|bundled] [--distribution paid|freemium]
                      [--trial 7d] [--trial-policy soft|hard]
                      [--purchase-url <https-link>]
-                     [--feedback-url <https-link> | --feedback-email <address>]
+                     [--feedback-endpoint <https-link> | --feedback-url <https-link>
+                      | --feedback-email <address>]
                      [--public-key <base64>]
                                             generate app-owned Swift plumbing
 indielicense revoke <key_id> [--note "refunded"] --key-dir <secure-directory>

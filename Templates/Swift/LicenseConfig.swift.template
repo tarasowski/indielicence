@@ -30,6 +30,13 @@ enum LicenseConfig {
     /// fetched by the app.
     static let feedbackURL: URL? = {{FEEDBACK_URL}}
 
+    /// Endpoint feedback mode: where the generated `LicenseFeedbackView` POSTs
+    /// a user-composed feature request as JSON {mode, version, message, email},
+    /// or nil when the app uses a link/email destination or no feedback at
+    /// all. The request is sent exclusively when the user presses Send — the
+    /// licensing code performs no other network activity of any kind.
+    static let feedbackEndpoint: URL? = {{FEEDBACK_ENDPOINT}}
+
     /// Keyless trial length in days, or nil when the app has no built-in trial.
     /// The trial starts on the customer's first launch and the start day is
     /// anchored once in the license file store; no license key is involved.

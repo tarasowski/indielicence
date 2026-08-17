@@ -360,7 +360,7 @@ final class CLITests: FixedKeyTestCase {
         trial: String? = nil, purchaseURL: String? = nil,
         trialPolicy: String? = nil, distribution: String? = nil,
         feedbackURL: String? = nil, feedbackEmail: String? = nil,
-        publicKey: String? = nil
+        feedbackEndpoint: String? = nil, publicKey: String? = nil
     ) throws {
         var arguments = [
             "swift", "--product", "pixelpro", "--build-date", "2026-07-11",
@@ -383,6 +383,9 @@ final class CLITests: FixedKeyTestCase {
         }
         if let feedbackEmail {
             arguments += ["--feedback-email", feedbackEmail]
+        }
+        if let feedbackEndpoint {
+            arguments += ["--feedback-endpoint", feedbackEndpoint]
         }
         if let publicKey {
             arguments += ["--public-key", publicKey]
@@ -653,6 +656,84 @@ final class CLITests: FixedKeyTestCase {
                 distribution: "freemium", publicKey: publicKeyBase64),
             "freemium must refuse the hard gate: the free core never locks")
         XCTAssertFalse(FileManager.default.fileExists(atPath: hardGate.path))
+    }
+
+    func testIntegrateFeedbackEndpointGeneratesInAppSheet() throws {
+        let output = tempDir.appendingPathComponent("FeedbackEndpoint")
+        try runIntegrate(
+            output: output, ui: "swiftui",
+            feedbackEndpoint: "https://example.com/api/feedback/pixelpro",
+            publicKey: publicKeyBase64)
+
+        let config = try String(
+            contentsOf: output.appendingPathComponent("LicenseConfig.swift"), encoding: .utf8)
+        XCTAssertTrue(config.contains(
+            "static let feedbackEndpoint: URL? = URL(string: \"https://example.com/api/feedback/pixelpro\")"))
+
+        let sheet = try String(
+            contentsOf: output.appendingPathComponent("LicenseFeedbackView.swift"), encoding: .utf8)
+        XCTAssertTrue(sheet.contains("struct LicenseFeedbackView"))
+        XCTAssertTrue(sheet.contains("LicenseConfig.feedbackEndpoint"))
+        XCTAssertTrue(sheet.contains("only when they press Send")
+            || sheet.contains("exactly once per explicit press of Send"))
+
+        let activation = try String(
+            contentsOf: output.appendingPathComponent("LicenseActivationView.swift"), encoding: .utf8)
+        XCTAssertTrue(activation.contains("showingFeedback"))
+        XCTAssertTrue(activation.contains("LicenseFeedbackView(license: license)"))
+        XCTAssertFalse(activation.contains("{{"), "activation placeholders must be resolved")
+
+        let guide = try String(
+            contentsOf: output.appendingPathComponent("LICENSE_INTEGRATION.md"), encoding: .utf8)
+        XCTAssertTrue(guide.contains("POST https://example.com/api/feedback/pixelpro"))
+    }
+
+    func testIntegrateWithoutEndpointEmitsNoNetworkingCode() throws {
+        let output = tempDir.appendingPathComponent("NoNetworking")
+        try runIntegrate(
+            output: output, ui: "swiftui", distribution: "freemium",
+            feedbackURL: "https://example.com/feedback/pixelpro", publicKey: publicKeyBase64)
+        let names = try FileManager.default.contentsOfDirectory(atPath: output.path)
+        XCTAssertFalse(names.contains("LicenseFeedbackView.swift"))
+        for name in names {
+            let contents = try String(
+                contentsOf: output.appendingPathComponent(name), encoding: .utf8)
+            for symbol in ["URLSession", "NSURLConnection", "CFNetwork", "import Network"] {
+                XCTAssertFalse(contents.contains(symbol),
+                               "\(name) must contain no networking code without --feedback-endpoint")
+            }
+        }
+    }
+
+    func testIntegrateRejectsConflictingOrInvalidFeedbackEndpoint() throws {
+        let both = tempDir.appendingPathComponent("EndpointAndURL")
+        XCTAssertThrowsError(
+            try runIntegrate(
+                output: both, ui: "swiftui", feedbackURL: "https://example.com/f",
+                feedbackEndpoint: "https://example.com/api", publicKey: publicKeyBase64))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: both.path))
+
+        let withEmail = tempDir.appendingPathComponent("EndpointAndEmail")
+        XCTAssertThrowsError(
+            try runIntegrate(
+                output: withEmail, ui: "swiftui", feedbackEmail: "dev@example.com",
+                feedbackEndpoint: "https://example.com/api", publicKey: publicKeyBase64))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: withEmail.path))
+
+        // The in-app sheet is SwiftUI; endpoint mode without it must refuse.
+        let noUI = tempDir.appendingPathComponent("EndpointNoUI")
+        XCTAssertThrowsError(
+            try runIntegrate(
+                output: noUI, feedbackEndpoint: "https://example.com/api",
+                publicKey: publicKeyBase64))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: noUI.path))
+
+        let insecure = tempDir.appendingPathComponent("EndpointHTTP")
+        XCTAssertThrowsError(
+            try runIntegrate(
+                output: insecure, ui: "swiftui",
+                feedbackEndpoint: "http://example.com/api", publicKey: publicKeyBase64))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: insecure.path))
     }
 
     func testIntegrateFeedbackEmailRendersMailtoLink() throws {

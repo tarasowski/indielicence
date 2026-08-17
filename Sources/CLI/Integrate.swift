@@ -97,10 +97,20 @@ struct Integrate: ParsableCommand {
     @Option(name: .customLong("feedback-email"), help: """
     Optional email address for feature requests instead of a web page. The \
     'Request a feature' link then opens the user's mail client with product, \
-    version, and tier pre-filled in the subject. Mutually exclusive with \
-    --feedback-url; the app still never performs a network request.
+    version, and tier pre-filled in the subject. Mutually exclusive with the \
+    other feedback modes; the app still never performs a network request.
     """)
     var feedbackEmail: String?
+
+    @Option(name: .customLong("feedback-endpoint"), help: """
+    Optional https endpoint that receives in-app feature requests as JSON \
+    {mode, version, message, email}. Generates LicenseFeedbackView — the only \
+    networking code the scaffold can ever emit — whose single request is \
+    composed by the user and sent exclusively when they press Send; nothing \
+    calls home on its own. Mutually exclusive with --feedback-url and \
+    --feedback-email; the in-app sheet requires --ui swiftui.
+    """)
+    var feedbackEndpoint: String?
 
     @OptionGroup var keyDirOption: KeyDirOption
 
@@ -136,17 +146,24 @@ struct Integrate: ParsableCommand {
         }
         let trialDays = try trial.map { try parseDurationDays($0, flag: "--trial") }
         let purchase = try purchaseURL.map { try validateHTTPSURL($0, flag: "--purchase-url") }
+        if [feedbackURL, feedbackEmail, feedbackEndpoint].compactMap({ $0 }).count > 1 {
+            throw CLIError.message(
+                "choose one feedback mode: --feedback-url, --feedback-endpoint, or --feedback-email")
+        }
+        // Link and email modes stay networking-free (the system opens them);
+        // endpoint mode generates the one user-initiated submission view.
         let feedback: String?
         if let feedbackURL {
-            guard feedbackEmail == nil else {
-                throw CLIError.message(
-                    "choose one feedback destination: --feedback-url or --feedback-email, not both")
-            }
             feedback = try validateHTTPSURL(feedbackURL, flag: "--feedback-url")
         } else if let feedbackEmail {
             feedback = "mailto:" + (try validateFeedbackEmail(feedbackEmail))
         } else {
             feedback = nil
+        }
+        let endpoint = try feedbackEndpoint.map { try validateHTTPSURL($0, flag: "--feedback-endpoint") }
+        if endpoint != nil && ui != .swiftui {
+            throw CLIError.message(
+                "--feedback-endpoint requires --ui swiftui: the in-app sheet is the generated LicenseFeedbackView")
         }
         let outputURL = URL(
             fileURLWithPath: (output as NSString).expandingTildeInPath,
@@ -166,14 +183,41 @@ struct Integrate: ParsableCommand {
                     "HARD_GATE": trialPolicy == .hard ? "true" : "false",
                     "FREEMIUM": distribution == .freemium ? "true" : "false",
                     "FEEDBACK_URL": feedback.map { "URL(string: \"\($0)\")" } ?? "nil",
+                    "FEEDBACK_ENDPOINT": endpoint.map { "URL(string: \"\($0)\")" } ?? "nil",
                 ])),
             ("LicenseManager.swift", EmbeddedTemplates.licenseManager),
             ("LicenseDevelopment.swift", EmbeddedTemplates.licenseDevelopment),
         ]
         if ui == .swiftui {
-            files.append(("LicenseActivationView.swift", EmbeddedTemplates.activationView))
+            // Endpoint mode wires the activation sheet to the generated
+            // in-app form; the other modes keep the browser/mail link, so a
+            // non-endpoint generation never references (or contains) any
+            // networking code.
+            let feedbackState = endpoint != nil
+                ? "    @State private var showingFeedback = false" : ""
+            let feedbackAction = endpoint != nil ? """
+                        Button("Request a feature") { showingFeedback = true }
+                            .buttonStyle(.link)
+                            .font(.callout)
+                            .sheet(isPresented: $showingFeedback) {
+                                LicenseFeedbackView(license: license)
+                            }
+            """ : """
+                        if let feedback = license.feedbackLink() {
+                            // Opened in the browser or mail client only; the app itself
+                            // never performs a network request in these modes.
+                            Link("Request a feature", destination: feedback)
+                                .font(.callout)
+                        }
+            """
+            files.append(("LicenseActivationView.swift", try render(
+                EmbeddedTemplates.activationView,
+                values: ["FEEDBACK_STATE": feedbackState, "FEEDBACK_ACTION": feedbackAction])))
             files.append(("LicenseBadgeView.swift", EmbeddedTemplates.badgeView))
             files.append(("LicenseGateView.swift", EmbeddedTemplates.gateView))
+            if endpoint != nil {
+                files.append(("LicenseFeedbackView.swift", EmbeddedTemplates.feedbackView))
+            }
         }
         if trialPolicy == .hard && ui != .swiftui {
             throw CLIError.message(
@@ -187,7 +231,9 @@ struct Integrate: ParsableCommand {
                 "DISTRIBUTION_DESCRIPTION": distribution == .freemium
                     ? "freemium — the core app is free forever; a key unlocks Pro (`license.isPro`)"
                     : "paid — a license is required (`license.hasFullAccess`)",
-                "FEEDBACK_DESCRIPTION": feedback.map { "`\($0)`" } ?? "not configured",
+                "FEEDBACK_DESCRIPTION": endpoint.map {
+                    "in-app form → `POST \($0)` (sent only when the user presses Send)"
+                } ?? feedback.map { "`\($0)`" } ?? "not configured",
                 "DENYLIST_DESCRIPTION": denylist == .bundled
                     ? "bundled signed `\(resolvedProduct).denylist.json`"
                     : "disabled",
@@ -208,6 +254,9 @@ struct Integrate: ParsableCommand {
         print("Debug builds start with full access and include the IndieLicense Testing menu.")
         if distribution == .freemium {
             print("Freemium: the core app must stay fully usable with no key. Gate only Pro features, with license.isPro.")
+        }
+        if endpoint != nil {
+            print("Feedback: LicenseFeedbackView holds the app's only network call — it sends exclusively when the user presses Send. Add no other networking, telemetry, or analytics.")
         }
         if ui == .swiftui && purchase == nil {
             print("Tip: pass --purchase-url <https-link> to show a 'Buy a license' button,")
